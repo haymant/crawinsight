@@ -1,3 +1,5 @@
+require('dotenv').config({ path: '.env.local' });
+
 const { buildServices } = require('./bootstrap');
 
 async function main() {

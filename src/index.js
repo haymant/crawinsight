@@ -1,3 +1,6 @@
+// load any environment variables defined in .env.local (e.g. Reddit credentials)
+require('dotenv').config({ path: '.env.local' });
+
 const { createApp } = require('./app');
 const { buildServices } = require('./bootstrap');
 

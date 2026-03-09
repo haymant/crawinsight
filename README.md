@@ -29,6 +29,9 @@ The API listens on port `3000` by default.
 
 - The legacy `feeds.reuters.com` RSS host is no longer reliable. The default source now pulls a **Google News financial feed filtered to Reuters links** so that the service works out of the box; the internal key is `google-news`.
 - Bloomberg uses a sitemap-style XML feed and Seeking Alpha uses symbol-driven RSS feeds.
+- Reddit support is available through the `reddit` plugin. The default config now uses subreddit JSON listings in browser mode rather than RSS.
+- Browser mode uses Playwright with a shared authenticated context, reads credentials from `.env.local` using `REDDIT_USERNAME`/`REDDIT_PASSWORD` (with backward-compatible support for `REDDIT_USER`/`REDDIT_PASS`), and throttles Reddit access according to `MAX_REQUESTS_PER_SOURCE_MINUTE` (default 5). Use `.env.local` to tune the rate limit.
+- Reddit may still block anonymous traffic from some networks. In that case the plugin retries through the authenticated browser session before falling back to page extraction. Mocked tests cover the parser and service flow; optional LIVE tests are designed to validate either successful access or a clear failure path.
 - Feed availability and anti-bot behavior can change; if a source stops resolving, update `config/sources.yaml` rather than assuming the scraper is broken.
 
 ## CLI
@@ -41,11 +44,19 @@ npm run cli -- bloomberg
 npm run cli -- nytimes
 npm run cli -- seekingalpha
 npm run cli -- cnbc
+npm run cli -- reddit-stocks
 ```
 
 After the CLI completes you can inspect the persisted `data/articles.json` file or hit the API to verify results.
 
 If a source is unreachable, the CLI now exits with an error instead of returning a misleading zero-result success payload.
+
+For Reddit browser mode, place credentials in `.env.local` before running the CLI:
+
+```bash
+REDDIT_USERNAME=your_username
+REDDIT_PASSWORD=your_password
+```
 
 ## Default data path
 
@@ -63,7 +74,15 @@ curl -X POST http://localhost:3000/api/sources \
   -d '{"name":"google-news","config":{ "displayName":"Google Financial News (Reuters links)","type":"rss","urls":["https://news.google.com/rss/search?q=site:reuters.com%20markets"],"filters":{"keywords":["market","earnings"]}}}'
 ```
 
-Repeat the POST for `bloomberg`, `nytimes`, `seekingalpha`, `cnbc` (or use the ones in `docs/DESIGN.md`).
+Repeat the POST for `bloomberg`, `nytimes`, `seekingalpha`, `cnbc`, and `reddit-stocks` (or use the ones in `docs/DESIGN.md`).
+
+Reddit example:
+
+```bash
+curl -X POST http://localhost:3000/api/sources \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"reddit-stocks","config":{"displayName":"Reddit Stocks","type":"reddit","urls":["https://www.reddit.com/r/{subreddit}/hot.json?limit=25"],"params":{"subreddits":["stocks","finance"]},"headers":{"userAgent":"Mozilla/5.0"},"filters":{"keywords":["earnings","market","stock","guidance","portfolio","trading","rates","fed"]},"options":{"maxItemsPerFeed":15,"browser":true}}}'
+```
 
 2. **Verify sources added**:
 
@@ -77,7 +96,7 @@ curl http://localhost:3000/api/sources | jq
 curl -X POST http://localhost:3000/api/scrapers -H 'Content-Type: application/json' -d '{"source":"google-news"}'
 ```
 
-Run the same command with other source keys (`bloomberg`, etc.).
+Run the same command with other source keys (`bloomberg`, `reddit-stocks`, etc.).
 
 4. **Create schedulers** (optional):
 
@@ -104,3 +123,9 @@ curl "http://localhost:3000/api/analysis?source=google-news" | jq
 Look for `articles` with `sentiment` and `sentimentType` fields populated.
 
 The same query can be run with other source keys (e.g. `source=bloomberg`).
+
+For Reddit-specific validation, filter by subreddit as well:
+
+```bash
+curl "http://localhost:3000/api/analysis?source=reddit-stocks&subreddit=stocks" | jq
+```

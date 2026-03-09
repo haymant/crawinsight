@@ -8,6 +8,7 @@ const { buildServices } = require('../src/bootstrap');
 const { makeTempDir } = require('./helpers');
 
 const googleFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'google.xml'), 'utf8'); // reuse same XML
+const redditJsonFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.json'), 'utf8');
 
 describe('API', () => {
   afterEach(() => { if (!useLive) nock.cleanAll(); });
@@ -78,5 +79,53 @@ describe('API', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/Invalid cron expression/);
+  });
+
+  test('filters analysis by subreddit for reddit sources', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const redditUrl = useLive
+      ? 'https://www.reddit.com/r/stocks/hot.json?limit=25'
+      : 'https://www.reddit.com/r/{subreddit}/hot.json?limit=2';
+
+    fs.writeFileSync(configPath, `sources:\n  reddit-stocks:\n    type: reddit\n    urls:\n      - ${redditUrl}\n    params:\n      subreddits:\n        - stocks\n    headers:\n      userAgent: Mozilla/5.0\n    filters:\n      keywords: [stock, market, guidance]\n`);
+
+    if (!useLive) {
+      nock('https://www.reddit.com')
+        .get('/r/stocks/hot.json')
+        .query({ limit: '2' })
+        .reply(200, redditJsonFixture, { 'content-type': 'application/json' });
+    }
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+    const app = createApp(services);
+
+    if (!useLive) {
+      const redditPlugin = require('../src/plugins').getPlugin('reddit');
+      jest.spyOn(redditPlugin, 'fetchWithBrowser').mockResolvedValue(redditJsonFixture);
+    }
+
+    const scrapeResponse = await request(app)
+      .post('/api/scrapers')
+      .send({ source: 'reddit-stocks' });
+    if (useLive) {
+      expect([200, 400]).toContain(scrapeResponse.status);
+    } else {
+      expect(scrapeResponse.status).toBe(200);
+    }
+
+    const analysisResponse = await request(app)
+      .get('/api/analysis')
+      .query({ source: 'reddit-stocks', subreddit: 'stocks' });
+    expect(analysisResponse.status).toBe(200);
+    expect(Array.isArray(analysisResponse.body.articles)).toBe(true);
+
+    if (!useLive) {
+      expect(analysisResponse.body.articles.length).toBeGreaterThan(0);
+      expect(analysisResponse.body.articles.every((article) => article.subreddit === 'stocks')).toBe(true);
+    }
   });
 });

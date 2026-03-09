@@ -8,6 +8,8 @@ const { makeTempDir } = require('./helpers');
 
 const googleFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'google.xml'), 'utf8'); // still contains Reuters sample data
 const transcriptFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'seekingalpha.xml'), 'utf8');
+const redditJsonFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.json'), 'utf8');
+const redditRssFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.xml'), 'utf8');
 
 describe('crawlService', () => {
   afterEach(() => {
@@ -70,6 +72,75 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
       // live feed: at least serve without error
       expect(result.jobId).toBeDefined();
     }
+  });
+
+  test('scrapes a reddit source and supports subreddit filtering', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const redditUrl = useLive
+      ? 'https://www.reddit.com/r/stocks/hot.json?limit=25'
+      : 'https://www.reddit.com/r/{subreddit}/hot.json?limit=2';
+
+    fs.writeFileSync(configPath, `sources:\n  reddit-stocks:\n    type: reddit\n    urls:\n      - ${redditUrl}\n    params:\n      subreddits:\n        - stocks\n    headers:\n      userAgent: Mozilla/5.0\n    filters:\n      keywords: [earnings, market, stock, guidance]\n`);
+
+    if (!useLive) {
+      nock('https://www.reddit.com')
+        .get('/r/stocks/hot.json')
+        .query({ limit: '2' })
+        .reply(200, redditJsonFixture, { 'content-type': 'application/json' });
+    }
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+
+    let result;
+    let liveError;
+    try {
+      result = await services.crawlService.runSource('reddit-stocks');
+    } catch (error) {
+      liveError = error;
+    }
+
+    if (useLive && liveError) {
+      expect(liveError.message).toMatch(/All requests failed/);
+      expect(services.jobService.listJobs()[0].status).toBe('failed');
+      return;
+    }
+
+    const allArticles = services.articleRepository.query({ source: 'reddit-stocks' });
+    const stockArticles = services.articleRepository.query({ source: 'reddit-stocks', subreddit: 'stocks' });
+
+    expect(result.jobId).toBeDefined();
+    expect(Array.isArray(allArticles)).toBe(true);
+    expect(Array.isArray(stockArticles)).toBe(true);
+
+  });
+
+  test('uses browser fetch when browser option enabled', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    // same reddit json fixture is fine
+    fs.writeFileSync(configPath, `sources:\n  reddit-stocks:\n    type: reddit\n    urls:\n      - https://www.reddit.com/r/{subreddit}/hot.json?limit=1\n    params:\n      subreddits:\n        - stocks\n    headers:\n      userAgent: Mozilla/5.0\n    filters:\n      keywords: [earnings]\n    options:\n      browser: true\n`);
+
+    if (!useLive) {
+      nock('https://www.reddit.com')
+        .get('/r/stocks/hot.json')
+        .query({ limit: '1' })
+        .reply(200, redditJsonFixture, { 'content-type': 'application/json' });
+    }
+
+    const plugin = require('../src/plugins').getPlugin('reddit');
+    const spy = jest.spyOn(plugin, 'fetchWithBrowser').mockResolvedValue(redditJsonFixture);
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+
+    await services.crawlService.runSource('reddit-stocks');
+    expect(spy).toHaveBeenCalled();
   });
 
   test('fails the run when every request for a source fails', async () => {

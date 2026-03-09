@@ -1,0 +1,33 @@
+{
+  "kind": "Listing",
+  "data": {
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "title": "AAPL earnings beat lifts market sentiment",
+          "permalink": "/r/stocks/comments/abc123/aapl_earnings_beat_lifts_market_sentiment/",
+          "created_utc": 1710000000,
+          "selftext": "Investors said AAPL guidance and margins improved after the quarter.",
+          "subreddit": "stocks",
+          "score": 842,
+          "num_comments": 134,
+          "url": "https://www.reddit.com/r/stocks/comments/abc123/aapl_earnings_beat_lifts_market_sentiment/"
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "title": "Macro market discussion thread",
+          "permalink": "/r/stocks/comments/def456/macro_market_discussion_thread/",
+          "created_utc": 1710003600,
+          "selftext": "Broad market commentary without a specific ticker.",
+          "subreddit": "stocks",
+          "score": 215,
+          "num_comments": 48,
+          "url": "https://www.reddit.com/r/stocks/comments/def456/macro_market_discussion_thread/"
+        }
+      }
+    ]
+  }
+}

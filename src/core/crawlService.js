@@ -38,6 +38,7 @@ class CrawlService {
     const failedRequests = [];
     let successfulRequests = 0;
 
+    const useBrowser = source.options?.browser && typeof plugin.fetchWithBrowser === 'function';
     const crawler = new BasicCrawler({
       maxConcurrency: source.concurrency || 2,
       async requestHandler({ request }) {
@@ -46,9 +47,16 @@ class CrawlService {
           headers['user-agent'] = source.headers.userAgent;
         }
 
-        const response = await axios.get(request.url, { headers, timeout: 15000 });
-        successfulRequests += 1;
-        const parsed = await plugin.parse({ body: response.data, metadata: request.userData?.metadata || {} });
+        let body;
+        if (useBrowser) {
+          body = await plugin.fetchWithBrowser(request.url, headers);
+          successfulRequests += 1;
+        } else {
+          const response = await axios.get(request.url, { headers, timeout: 15000 });
+          successfulRequests += 1;
+          body = response.data;
+        }
+        const parsed = await plugin.parse({ body, metadata: request.userData?.metadata || {} });
         const limit = source.options?.maxItemsPerFeed || parsed.length;
 
         for (const item of parsed.slice(0, limit)) {

@@ -73,3 +73,28 @@ sources:
         - economy
     options:
       maxItemsPerFeed: 20
+  reddit-stocks:
+    displayName: Reddit Stocks
+    type: reddit
+    urls:
+      - https://www.reddit.com/user/haymentt/m/financialmarket/hot.json?limit=35
+    #   - https://www.reddit.com/r/{subreddit}/hot.json?limit=25
+    # params:
+    #   subreddits:
+    #     - stocks
+    #     - finance
+    headers:
+      userAgent: Mozilla/5.0
+    filters:
+      keywords:
+        - earnings
+        - market
+        - stock
+        - guidance
+        - portfolio
+        - trading
+        - rates
+        - fed
+    options:
+      maxItemsPerFeed: 15
+      browser: true

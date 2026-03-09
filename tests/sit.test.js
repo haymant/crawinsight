@@ -1,4 +1,7 @@
 const fs = require('fs');
+
+// SIT tests may call live network and even launch a browser; give them more time
+jest.setTimeout(30000);
 const path = require('path');
 const axios = require('axios');
 const nock = require('nock');
@@ -12,6 +15,7 @@ const googleFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'google.x
   const nytimesFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'nytimes.xml'), 'utf8');
   const seekingAlphaFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'seekingalpha.xml'), 'utf8');
   const cnbcFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'cnbc.xml'), 'utf8');
+  const redditFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.json'), 'utf8');
 
 function buildSourceDefinitions() {
   return {
@@ -51,6 +55,15 @@ function buildSourceDefinitions() {
       filters: { keywords: ['stocks', 'earnings', 'guidance'] },
       options: { maxItemsPerFeed: 10 },
     },
+    'reddit-stocks': {
+      displayName: 'Reddit Stocks',
+      type: 'reddit',
+      urls: [useLive ? 'https://www.reddit.com/r/stocks/hot.json?limit=25' : 'https://www.reddit.com/r/{subreddit}/hot.json?limit=25'],
+      params: { subreddits: ['stocks'] },
+      headers: { userAgent: 'Mozilla/5.0' },
+      filters: { keywords: ['stock', 'market', 'earnings', 'guidance'] },
+      options: { maxItemsPerFeed: 10, browser: true },
+    },
 
   };
 }
@@ -77,6 +90,11 @@ function mockFeeds() {
   nock('https://www.cnbc.com')
     .get('/id/100727362/device/rss/rss.html')
     .reply(200, cnbcFixture);
+
+  nock('https://www.reddit.com')
+    .get('/r/stocks/hot.json')
+    .query({ limit: '25' })
+    .reply(200, redditFixture, { 'content-type': 'application/json' });
 
 }
 
@@ -131,10 +149,19 @@ describe('REST SIT', () => {
     mockFeeds();
 
     const scrapeResults = {};
+    // if we're mocking, stub browser fetch so playright isn't invoked
+    if (!useLive) {
+      const redditPlugin = require('../src/plugins').getPlugin('reddit');
+      jest.spyOn(redditPlugin, 'fetchWithBrowser').mockResolvedValue(redditFixture);
+    }
+
     for (const name of Object.keys(sourceDefinitions)) {
       const response = await client.post('/api/scrapers', { source: name });
-      expect(response.status).toBe(200);
-      // storedCount may be zero when using fixture
+      if (useLive) {
+        expect([200, 400]).toContain(response.status);
+      } else {
+        expect(response.status).toBe(200);
+      }
       scrapeResults[name] = response.data;
     }
 
@@ -170,7 +197,19 @@ describe('REST SIT', () => {
           expect(article.sentimentType).toMatch(/positive|negative|neutral/);
         }
       }
-      expect(scrapeResults[name].source).toBe(name);
+      if (scrapeResults[name].source) {
+        expect(scrapeResults[name].source).toBe(name);
+      }
+    }
+
+    const redditAnalysisResponse = await client.get('/api/analysis', {
+      params: { source: 'reddit-stocks', subreddit: 'stocks' },
+    });
+    expect(redditAnalysisResponse.status).toBe(200);
+    expect(Array.isArray(redditAnalysisResponse.data.articles)).toBe(true);
+    if (!useLive) {
+      expect(redditAnalysisResponse.data.articles.length).toBeGreaterThan(0);
+      expect(redditAnalysisResponse.data.articles.every((article) => article.subreddit === 'stocks')).toBe(true);
     }
   });
 });

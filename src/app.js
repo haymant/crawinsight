@@ -78,6 +78,7 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
   app.get('/api/analysis', (req, res) => {
     const articles = articleRepository.query({
       source: req.query.source,
+      subreddit: req.query.subreddit,
       asset: req.query.asset,
       sentiment: req.query.sentiment,
     });
