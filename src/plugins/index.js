@@ -1,11 +1,13 @@
 const rssPlugin = require('./rss');
 const redditPlugin = require('./reddit');
 const transcriptsPlugin = require('./transcripts');
+const xPlugin = require('./x');
 
 const plugins = {
   rss: rssPlugin,
   reddit: redditPlugin,
   transcripts: transcriptsPlugin,
+  x: xPlugin,
 };
 
 function getPlugin(type) {

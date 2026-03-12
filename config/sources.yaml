@@ -98,3 +98,17 @@ sources:
     options:
       maxItemsPerFeed: 15
       browser: true
+  x-financial-list:
+    displayName: X Financial List Example
+    type: x
+    urls:
+      - https://x.com/i/lists/2030824480940146987
+    headers:
+      userAgent: Mozilla/5.0
+    filters:
+      keywords:
+        - market
+        - fed
+    options:
+      browser: true
+      maxItemsPerFeed: 20

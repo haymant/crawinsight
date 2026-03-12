@@ -1,4 +1,4 @@
-# CrawInsight
+# CrawlInsight
 
 Local financial feed scraping and VADER sentiment analysis service.
 
@@ -32,6 +32,7 @@ The API listens on port `3000` by default.
 - Reddit support is available through the `reddit` plugin. The default config now uses subreddit JSON listings in browser mode rather than RSS.
 - Browser mode uses Playwright with a shared authenticated context, reads credentials from `.env.local` using `REDDIT_USERNAME`/`REDDIT_PASSWORD` (with backward-compatible support for `REDDIT_USER`/`REDDIT_PASS`), and throttles Reddit access according to `MAX_REQUESTS_PER_SOURCE_MINUTE` (default 5). Use `.env.local` to tune the rate limit.
 - Reddit may still block anonymous traffic from some networks. In that case the plugin retries through the authenticated browser session before falling back to page extraction. Mocked tests cover the parser and service flow; optional LIVE tests are designed to validate either successful access or a clear failure path.
+- **New:** X.com (formerly Twitter) support is available via the `x` plugin. It only works in browser mode and requires valid credentials in `.env.local` (`X_USERNAME` and `X_PASSWORD`). The X plugin can scrape public lists, account timelines, or hashtag searches; see `docs/X.md` for design details. X access is also throttled by `MAX_REQUESTS_PER_SOURCE_MINUTE`. You can force Playwright to run visibly by setting `X_HEADLESS=false` in the environment; this is useful for completing manual login challenges. If you configure an X source, add a `urls` entry with the desired list/search URL and set `options.browser: true`.
 - Feed availability and anti-bot behavior can change; if a source stops resolving, update `config/sources.yaml` rather than assuming the scraper is broken.
 
 ## CLI
@@ -45,8 +46,8 @@ npm run cli -- nytimes
 npm run cli -- seekingalpha
 npm run cli -- cnbc
 npm run cli -- reddit-stocks
+npm run cli -- x-financial-list   # example X.com list or timeline
 ```
-
 After the CLI completes you can inspect the persisted `data/articles.json` file or hit the API to verify results.
 
 If a source is unreachable, the CLI now exits with an error instead of returning a misleading zero-result success payload.
@@ -57,6 +58,27 @@ For Reddit browser mode, place credentials in `.env.local` before running the CL
 REDDIT_USERNAME=your_username
 REDDIT_PASSWORD=your_password
 ```
+
+For X browser mode the first login attempt may trigger a manual challenge (2FA, captcha,
+For X browser mode the first login attempt will always prompt for your
+phone number (or email) before showing the password field.  The plugin now
+steps through that secondary prompt automatically, but if X presents any other
+challenge (captcha, 2FA page, etc.) it will throw the message
+`X login challenge requires manual verification`.
+
+When operating interactively you can supply `X_HEADLESS=false` and the plugin
+will pause right before giving up, opening a visible Chromium window with
+devtools attached; you can then enter the required information or solve the
+captcha and click ▶︎ to resume the script.  Once a session is established the
+state is stored in `data/.x-auth.json` and future runs should succeed
+headlessly.
+
+If the challenge cannot be solved programmatically you can also log in manually
+with a normal browser and copy the storage state file.
+
+Keep `X_USERNAME`/`X_PASSWORD` set in `.env.local` so the plugin can refresh
+and reuse that state when it expires.
+
 
 ## Default data path
 

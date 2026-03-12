@@ -9,5 +9,5 @@ const app = createApp(services);
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => {
-  console.log(`CrawInsight API listening on port ${port}`);
+  console.log(`CrawlInsight API listening on port ${port}`);
 });

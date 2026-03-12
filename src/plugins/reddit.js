@@ -3,7 +3,7 @@ const path = require('path');
 const { URL } = require('url');
 const rssPlugin = require('./rss');
 
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 CrawInsight/1.0';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 CrawlInsight/1.0';
 // throttle derived from environment variable or default 5 requests per minute
 const MAX_REQS = Number(process.env.MAX_REQUESTS_PER_SOURCE_MINUTE) || 5;
 const REDDIT_REQUEST_INTERVAL_MS = Math.ceil(60000 / MAX_REQS);

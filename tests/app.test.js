@@ -9,6 +9,20 @@ const { makeTempDir } = require('./helpers');
 
 const googleFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'google.xml'), 'utf8'); // reuse same XML
 const redditJsonFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.json'), 'utf8');
+const xFixture = [{
+  title: 'Oil traders react to macro data',
+  link: 'https://x.com/markets/status/1912345678901234567',
+  publishedAt: '2026-03-09T10:00:00.000Z',
+  summary: 'Oil traders react to macro data and a stronger dollar.',
+  content: 'Oil traders react to macro data and a stronger dollar.',
+  author: 'Markets Desk',
+  handle: 'markets',
+  listId: '2030824480940146987',
+  tag: 'oil',
+  likeCount: 22,
+  repostCount: 8,
+  replyCount: 5,
+}];
 
 describe('API', () => {
   afterEach(() => { if (!useLive) nock.cleanAll(); });
@@ -127,5 +141,44 @@ describe('API', () => {
       expect(analysisResponse.body.articles.length).toBeGreaterThan(0);
       expect(analysisResponse.body.articles.every((article) => article.subreddit === 'stocks')).toBe(true);
     }
+  });
+
+  test('filters analysis by x-specific metadata', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    fs.writeFileSync(configPath, `sources:\n  x-financial-list:\n    type: x\n    urls:\n      - https://x.com/i/lists/2030824480940146987\n    headers:\n      userAgent: Mozilla/5.0\n    filters:\n      keywords: [oil, dollar]\n    options:\n      browser: true\n`);
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+    const app = createApp(services);
+
+    const xPlugin = require('../src/plugins').getPlugin('x');
+    jest.spyOn(xPlugin, 'fetchWithBrowser').mockResolvedValue(xFixture);
+
+    const scrapeResponse = await request(app)
+      .post('/api/scrapers')
+      .send({ source: 'x-financial-list' });
+
+    expect(scrapeResponse.status).toBe(200);
+
+    const analysisResponse = await request(app)
+      .get('/api/analysis')
+      .query({
+        source: 'x-financial-list',
+        listId: '2030824480940146987',
+        handle: 'markets',
+        tag: 'oil',
+      });
+
+    expect(analysisResponse.status).toBe(200);
+    expect(analysisResponse.body.articles).toHaveLength(1);
+    expect(analysisResponse.body.articles[0]).toMatchObject({
+      author: 'Markets Desk',
+      handle: 'markets',
+      listId: '2030824480940146987',
+      tag: 'oil',
+    });
   });
 });

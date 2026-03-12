@@ -1,6 +1,6 @@
-### Reddit Source Extension Plan for CrawInsight
+### Reddit Source Extension Plan for CrawlInsight
 
-This note revises the earlier Reddit research into a plan that fits the current CrawInsight repository rather than a hypothetical larger platform.
+This note revises the earlier Reddit research into a plan that fits the current CrawlInsight repository rather than a hypothetical larger platform.
 
 The service in this repo currently uses:
 - CommonJS on Node.js.

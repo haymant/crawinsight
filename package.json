@@ -1,5 +1,5 @@
 {
-  "name": "crawinsight",
+  "name": "crawlinsight",
   "version": "1.0.0",
   "description": "Local financial feed scraping and sentiment analysis service",
   "main": "src/index.js",

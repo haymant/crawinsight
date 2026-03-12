@@ -10,6 +10,20 @@ const googleFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'google.x
 const transcriptFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'seekingalpha.xml'), 'utf8');
 const redditJsonFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.json'), 'utf8');
 const redditRssFixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'reddit.xml'), 'utf8');
+const xFixture = [{
+  title: 'Fed speakers move Treasury yields',
+  link: 'https://x.com/markets/status/1912345678901234567',
+  publishedAt: '2026-03-09T10:00:00.000Z',
+  summary: 'Treasury yields moved after fresh Fed commentary.',
+  content: 'Treasury yields moved after fresh Fed commentary.',
+  author: 'Markets Desk',
+  handle: 'markets',
+  listId: '2030824480940146987',
+  tag: 'fed',
+  likeCount: 15,
+  repostCount: 4,
+  replyCount: 2,
+}];
 
 describe('crawlService', () => {
   afterEach(() => {
@@ -141,6 +155,33 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
 
     await services.crawlService.runSource('reddit-stocks');
     expect(spy).toHaveBeenCalled();
+  });
+
+  test('scrapes an x source and persists x metadata', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    fs.writeFileSync(configPath, `sources:\n  x-financial-list:\n    type: x\n    urls:\n      - https://x.com/i/lists/2030824480940146987\n    headers:\n      userAgent: Mozilla/5.0\n    filters:\n      keywords: [Fed, yields]\n    options:\n      browser: true\n      maxItemsPerFeed: 5\n`);
+
+    const plugin = require('../src/plugins').getPlugin('x');
+    const spy = jest.spyOn(plugin, 'fetchWithBrowser').mockResolvedValue(xFixture);
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+
+    const result = await services.crawlService.runSource('x-financial-list');
+    const articles = services.articleRepository.query({ source: 'x-financial-list', listId: '2030824480940146987' });
+
+    expect(result.jobId).toBeDefined();
+    expect(spy).toHaveBeenCalled();
+    expect(articles).toHaveLength(1);
+    expect(articles[0]).toMatchObject({
+      author: 'Markets Desk',
+      handle: 'markets',
+      listId: '2030824480940146987',
+      tag: 'fed',
+    });
   });
 
   test('fails the run when every request for a source fails', async () => {
