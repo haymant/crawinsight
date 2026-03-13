@@ -108,6 +108,8 @@ describe('source configuration and plugin expansion', () => {
 
     const result = await crawlService.runSource('foo', { forceInline: true });
     const expectedFile = path.join(tempDir, 'S1', 'articles.json');
+    const primaryFile = path.join(tempDir, 'default.json');
     expect(fs.existsSync(expectedFile)).toBe(true);
+    expect(fs.existsSync(primaryFile)).toBe(true);
   });
 });

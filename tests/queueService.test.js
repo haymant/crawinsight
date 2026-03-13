@@ -36,4 +36,24 @@ describe('QueueService', () => {
     await expect(q.registerScrapeWorker(() => {})).resolves.toBeUndefined();
     expect(q.boss.work).toHaveBeenCalled();
   });
+
+  test('registerSentimentWorker creates queue before working', async () => {
+    const q = new QueueService(null);
+    const calls = [];
+    q.boss = {
+      start: jest.fn().mockResolvedValue(undefined),
+      createQueue: jest.fn().mockResolvedValue(undefined),
+      work: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await q.registerSentimentWorker((job) => calls.push(job));
+    expect(q.boss.start).toHaveBeenCalled();
+    expect(q.boss.createQueue).toHaveBeenCalledWith('sentiment-judge');
+    expect(q.boss.work).toHaveBeenCalledWith('sentiment-judge', expect.any(Function));
+
+    const handler = q.boss.work.mock.calls[0][1];
+    const fakeJob = { id: '123', data: { foo: 'bar' } };
+    await handler([fakeJob]);
+    expect(calls).toEqual([fakeJob]);
+  });
 });

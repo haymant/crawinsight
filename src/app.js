@@ -2,7 +2,7 @@ const express = require('express');
 
 // swagger removed per user request; documentation is maintained separately if needed
 
-function createApp({ sourceConfigService, crawlService, jobService, schedulerService, articleRepository }) {
+function createApp({ sourceConfigService, crawlService, jobService, schedulerService, articleRepository, mentionRepository, featureRepository, sentimentService }) {
   const app = express();
   app.use(express.json());
 
@@ -115,6 +115,41 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
       sentiment: req.query.sentiment,
     });
     res.json({ articles });
+  });
+
+  app.post('/api/analyze', async (req, res) => {
+    try {
+      const source = String(req.body?.source || '').trim();
+      if (!source) {
+        throw new Error('source is required');
+      }
+      const articles = await articleRepository.query({ source });
+      const result = await sentimentService.requestAnalysis({
+        source,
+        articleIds: articles.map((article) => article.id || article.articleId),
+        forceInline: !crawlService.queueService?.isEnabled(),
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/features', async (req, res) => {
+    const features = await featureRepository.query({
+      symbol: req.query.symbol,
+      featureDate: req.query.date,
+    });
+    res.json({ features });
+  });
+
+  app.get('/api/mentions', async (req, res) => {
+    const mentions = await mentionRepository.query({
+      articleId: req.query.articleId,
+      symbol: req.query.symbol,
+      source: req.query.source,
+    });
+    res.json({ mentions });
   });
 
   return app;

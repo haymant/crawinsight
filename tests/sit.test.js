@@ -184,11 +184,16 @@ describe('REST SIT', () => {
 
     const jobsResponse = await client.get('/api/jobs');
     expect(jobsResponse.status).toBe(200);
-    expect(jobsResponse.data.jobs).toHaveLength(Object.keys(sourceDefinitions).length);
     expect(jobsResponse.data.jobs.every((job) => job.status !== 'running' && job.status !== 'failed')).toBe(true);
     expect(jobsResponse.data.jobs.every((job) => typeof job.id === 'string')).toBe(true);
     expect(jobsResponse.data.jobs.every((job) => typeof job.createdAt === 'string' && typeof job.updatedAt === 'string')).toBe(true);
     expect(jobsResponse.data.jobs.every((job) => typeof job.payload?.source === 'string')).toBe(true);
+    const scrapeJobs = jobsResponse.data.jobs.filter((job) => job.type === 'scrape');
+    const sentimentJobs = jobsResponse.data.jobs.filter((job) => job.type === 'sentiment-judge');
+    expect(scrapeJobs).toHaveLength(Object.keys(sourceDefinitions).length);
+    const scrapeJobsWithStoredArticles = scrapeJobs.filter((job) => Array.isArray(job.result?.articleIds) && job.result.articleIds.length > 0);
+    expect(sentimentJobs).toHaveLength(scrapeJobsWithStoredArticles.length);
+    expect(sentimentJobs.every((job) => typeof job.payload?.parentJobId === 'string')).toBe(true);
 
     for (const name of Object.keys(sourceDefinitions)) {
       const analysisResponse = await client.get('/api/analysis', { params: { source: name } });

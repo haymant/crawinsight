@@ -196,4 +196,66 @@ describe('API', () => {
       tag: 'oil',
     });
   });
+
+  test('analyze endpoint persists multi-asset mentions and daily features', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    fs.writeFileSync(configPath, 'sources: {}\n');
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+    const app = createApp(services);
+
+    await services.articleRepository.insertMany([
+      {
+        id: 'article-1',
+        source: 'manual',
+        title: 'AAPL rallies as TSLA slides after earnings',
+        summary: 'AAPL beats while TSLA cuts outlook.',
+        content: 'AAPL beats expectations after strong demand while TSLA slides after weaker guidance and margin pressure.',
+        assets: ['AAPL', 'TSLA'],
+        publishedAt: '2026-03-09T10:00:00.000Z',
+      },
+    ]);
+
+    const analyzeResponse = await request(app)
+      .post('/api/analyze')
+      .send({ source: 'manual' });
+
+    expect(analyzeResponse.status).toBe(200);
+    expect(analyzeResponse.body.status).toBe('completed');
+
+    const mentionsResponse = await request(app)
+      .get('/api/mentions')
+      .query({ source: 'manual' });
+    expect(mentionsResponse.status).toBe(200);
+    expect(mentionsResponse.body.mentions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ articleId: 'article-1', assetId: 'AAPL' }),
+        expect.objectContaining({ articleId: 'article-1', assetId: 'TSLA' }),
+      ])
+    );
+
+    const aaplFeaturesResponse = await request(app)
+      .get('/api/features')
+      .query({ symbol: 'AAPL' });
+    expect(aaplFeaturesResponse.status).toBe(200);
+    expect(aaplFeaturesResponse.body.features).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ symbol: 'AAPL', articleCount: 1 }),
+      ])
+    );
+
+    const tslaFeaturesResponse = await request(app)
+      .get('/api/features')
+      .query({ symbol: 'TSLA' });
+    expect(tslaFeaturesResponse.status).toBe(200);
+    expect(tslaFeaturesResponse.body.features).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ symbol: 'TSLA', articleCount: 1 }),
+      ])
+    );
+  });
 });

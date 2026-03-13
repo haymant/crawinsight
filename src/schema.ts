@@ -318,16 +318,31 @@ export const crawlinsight_articles = pgTable("crawlinsight_articles", {
   list_id: text("list_id"),
   subreddit: text("subreddit"),
   content: text("content"),
-  sentiment: integer("sentiment"),
+  summary: text("summary"),
+  full_content_path: text("full_content_path"),
+  sentiment: jsonb("sentiment"),
+  sentiment_type: text("sentiment_type"),
   assets: jsonb("assets"),
+  linked_article_ids: jsonb("linked_article_ids"),
+  crawl_depth: integer("crawl_depth").default(1),
+  ingested_at: timestamp("ingested_at", { mode: "string" }),
   published_at: timestamp("published_at", { mode: "string" }),
   updated_at: timestamp("updated_at", { mode: "string" }).defaultNow(),
+  metadata: jsonb("metadata"),
 });
 
 export const crawlinsight_article_mentions = pgTable("crawlinsight_article_mentions", {
   mention_id: varchar("mention_id", { length: 64 }).primaryKey(),
   article_id: varchar("article_id", { length: 64 }).references(() => crawlinsight_articles.article_id),
+  source_name: text("source_name"),
   asset_id: varchar("asset_id", { length: 30 }).notNull(),
+  context_snippet: text("context_snippet"),
+  vader_compound: doublePrecision("vader_compound"),
+  llm_score: doublePrecision("llm_score"),
+  final_score: doublePrecision("final_score"),
+  sentiment_type: text("sentiment_type"),
+  mention_offset: integer("mention_offset"),
+  published_at: timestamp("published_at", { mode: "string" }),
   created_at: timestamp("created_at", { mode: "string" }).defaultNow(),
 });
 

@@ -271,4 +271,71 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
       })
     );
   });
+
+  test('inline sentiment analysis persists distinct multi-asset mentions and feature rows', async () => {
+    const articleRepository = {
+      getByIds: jest.fn().mockResolvedValue([
+        {
+          id: 'article-1',
+          source: 'google-news',
+          title: 'AAPL climbs while TSLA falls after earnings updates',
+          summary: 'AAPL beats expectations and TSLA faces margin pressure.',
+          content: 'AAPL beats expectations after strong demand while TSLA falls on weaker guidance and margin pressure.',
+          assets: ['AAPL', 'TSLA'],
+          publishedAt: '2026-03-09T10:00:00.000Z',
+        },
+      ]),
+      updateAnalysis: jest.fn().mockResolvedValue(true),
+    };
+    const mentionRepository = {
+      replaceForArticles: jest.fn().mockResolvedValue([]),
+    };
+    const featureRepository = {
+      getRecentBySymbols: jest.fn().mockResolvedValue([]),
+      upsertMany: jest.fn().mockResolvedValue([]),
+    };
+    const jobService = {
+      createJob: jest.fn().mockResolvedValue({ id: 'sent-job-1' }),
+      updateJob: jest.fn().mockResolvedValue(undefined),
+    };
+    const { SentimentService } = require('../src/services/sentimentService');
+    const sentimentService = new SentimentService({
+      articleRepository,
+      mentionRepository,
+      featureRepository,
+      jobService,
+      queueService: { isEnabled: () => false },
+    });
+
+    const result = await sentimentService.requestAnalysis({
+      source: 'google-news',
+      articleIds: ['article-1'],
+      forceInline: true,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(mentionRepository.replaceForArticles).toHaveBeenCalledWith(
+      ['article-1'],
+      expect.arrayContaining([
+        expect.objectContaining({ articleId: 'article-1', assetId: 'AAPL' }),
+        expect.objectContaining({ articleId: 'article-1', assetId: 'TSLA' }),
+      ])
+    );
+
+    const mentions = mentionRepository.replaceForArticles.mock.calls[0][1];
+    expect(new Set(mentions.map((mention) => mention.assetId))).toEqual(new Set(['AAPL', 'TSLA']));
+    expect(featureRepository.upsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ symbol: 'AAPL', articleCount: 1 }),
+        expect.objectContaining({ symbol: 'TSLA', articleCount: 1 }),
+      ])
+    );
+    expect(articleRepository.updateAnalysis).toHaveBeenCalledWith(
+      'article-1',
+      expect.objectContaining({
+        sentiment: expect.any(Object),
+        sentimentType: expect.stringMatching(/positive|negative|neutral/),
+      })
+    );
+  });
 });

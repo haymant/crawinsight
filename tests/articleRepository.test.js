@@ -25,4 +25,70 @@ describe('ArticleRepository', () => {
     const result = await repo.query({ source: 'foo' });
     expect(result.length).toBe(1);
   });
+
+  test('raw pg client receives JSON-encoded arrays for jsonb columns', async () => {
+    const captured = [];
+    const fakeDb = { $client: { query: jest.fn((sql, params) => {
+      captured.push(params);
+      return Promise.resolve({ rows: [] });
+    }) } };
+
+    const repo = new ArticleRepository({ db: fakeDb });
+
+    const article = {
+      id: '1',
+      source: 'foo',
+      title: 'bar',
+      link: 'u',
+      assets: ['E5B'],
+      linkedArticleIds: ['A'],
+      metadata: { foo: 'bar' },
+    };
+
+    await repo.insertMany([article]);
+
+    expect(captured).toHaveLength(1);
+    const params = captured[0];
+
+    // $14 is assets in the INSERT statement
+    expect(typeof params[13]).toBe('string');
+    expect(params[13]).toBe(JSON.stringify(['E5B']));
+
+    // linked_article_ids should also be JSON encoded
+    expect(typeof params[14]).toBe('string');
+    expect(params[14]).toBe(JSON.stringify(['A']));
+
+    // metadata should be JSON encoded too
+    expect(typeof params[19]).toBe('string');
+    expect(params[19]).toBe(JSON.stringify({ foo: 'bar' }));
+  });
+
+  test('Postgres array literal strings are converted to JSON arrays', async () => {
+    const captured = [];
+    const fakeDb = { $client: { query: jest.fn((sql, params) => {
+      captured.push(params);
+      return Promise.resolve({ rows: [] });
+    }) } };
+
+    const repo = new ArticleRepository({ db: fakeDb });
+
+    const article = {
+      id: '2',
+      source: 'foo',
+      title: 'bar',
+      link: 'u',
+      assets: '{"IEA","TSX"}',
+      linkedArticleIds: '{"A"}',
+      metadata: '{"foo":"bar"}',
+    };
+
+    await repo.insertMany([article]);
+
+    expect(captured).toHaveLength(1);
+    const params = captured[0];
+
+    expect(params[13]).toBe(JSON.stringify(['IEA', 'TSX']));
+    expect(params[14]).toBe(JSON.stringify(['A']));
+    expect(params[19]).toBe(JSON.stringify({ foo: 'bar' }));
+  });
 });

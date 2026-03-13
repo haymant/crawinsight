@@ -6,9 +6,10 @@ const { getPlugin } = require('../plugins');
 const { analyzeArticle } = require('../services/analysisService');
 
 class CrawlService {
-  constructor({ sourceConfigService, articleRepository, jobService, rawContentStore, queueService }) {
+  constructor({ sourceConfigService, articleRepository, sentimentService, jobService, rawContentStore, queueService }) {
     this.sourceConfigService = sourceConfigService;
     this.articleRepository = articleRepository;
+    this.sentimentService = sentimentService;
     this.jobService = jobService;
     this.rawContentStore = rawContentStore;
     this.queueService = queueService;
@@ -76,6 +77,14 @@ class CrawlService {
 
     try {
       const result = await this.executeSource(sourceName, source);
+      if (this.sentimentService && result.articleIds?.length) {
+        result.analysis = await this.sentimentService.requestAnalysis({
+          source: sourceName,
+          articleIds: result.articleIds,
+          parentJobId: jobId,
+          forceInline: !this.queueService?.isEnabled(),
+        });
+      }
       const status = result.failedRequestCount > 0 ? 'completed_with_errors' : 'completed';
       console.log(`job ${jobId} finished: fetched=${result.fetchedCount} stored=${result.storedCount} failures=${result.failedRequestCount}`);
       await this.jobService.updateJob(jobId, {
@@ -171,43 +180,45 @@ class CrawlService {
 
     console.log(`executeSource result for ${sourceName}: ${successfulRequests} success, ${failedRequests.length} failures`);
 
-    // if the source definition included a custom storeDir (storage_id),
-    // look up the corresponding storage record.  when the storage type is
-    // filesystem we compute a path under its base_path using the source
-    // name; otherwise we fall back to default repo.
-    let repo = this.articleRepository
+    // Articles must always land in the primary repository so downstream
+    // sentiment analysis can read them back. A filesystem storeDir is treated
+    // as an optional mirror destination, not the source of truth.
+    let mirrorRepo = null;
     if (source.storeDir && typeof source.storeDir === 'string') {
       try {
-        const { db } = require('../db')
-        // simple parameterized query rather than builder API (avoids raw)
+        const { db } = require('../db');
         let storage = null;
         try {
-          const result = await db.execute(sql`SELECT * FROM storages WHERE storage_id = ${source.storeDir}`)
-          const storageRows = result.rows || []
-          storage = storageRows[0]
+          const result = await db.execute(sql`SELECT * FROM storages WHERE storage_id = ${source.storeDir}`);
+          const storageRows = result.rows || [];
+          storage = storageRows[0];
         } catch (e) {
-          console.error('storage lookup failed', e)
+          console.error('storage lookup failed', e);
         }
         if (storage && storage.type === 'filesystem') {
-          const config = storage.config || {}
-          const base = String(config.base_path || config.path || '').trim()
+          const config = storage.config || {};
+          const base = String(config.base_path || config.path || '').trim();
           if (base) {
-            const { ArticleRepository } = require("../storage/articleRepository")
-            const path = require('path')
-            const dest = path.join(base, source.storeDir, 'articles.json')
-            repo = new ArticleRepository(dest)
+            const { ArticleRepository } = require('../storage/articleRepository');
+            const path = require('path');
+            const dest = path.join(base, source.storeDir, 'articles.json');
+            mirrorRepo = new ArticleRepository(dest);
           }
         }
       } catch (e) {
-        console.error('failed to resolve storage for storeDir', source.storeDir, e)
+        console.error('failed to resolve storage for storeDir', source.storeDir, e);
       }
     }
-    const stored = await repo.insertMany(analyzedArticles);
+    const stored = await this.articleRepository.insertMany(analyzedArticles);
+    if (mirrorRepo) {
+      await mirrorRepo.insertMany(analyzedArticles);
+    }
 
     return {
       source: sourceName,
       fetchedCount: analyzedArticles.length,
       storedCount: stored.length,
+      articleIds: stored.map((article) => article.id),
       successfulRequestCount: successfulRequests,
       failedRequestCount: failedRequests.length,
       failures: failedRequests,
