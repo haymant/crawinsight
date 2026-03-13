@@ -11,30 +11,48 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
     res.json({ status: 'ok' });
   });
 
-  app.get('/api/sources', (req, res) => {
-    res.json({ sources: sourceConfigService.listSources() });
+  app.get('/api/sources', async (req, res) => {
+    try {
+      const sources = await sourceConfigService.listSources();
+      res.json({ sources });
+    } catch (err) {
+      console.error('/api/sources error', err);
+      res.status(500).json({ error: 'failed to fetch sources' });
+    }
   });
 
-  app.post('/api/sources', (req, res) => {
+  app.post('/api/sources', async (req, res) => {
     try {
       const { name, config } = req.body;
-      const source = sourceConfigService.upsertSource(name, config);
+      if (!name || typeof name !== 'string') {
+        throw new Error('name required');
+      }
+      if (!config || typeof config !== 'object') {
+        throw new Error('config object required');
+      }
+      ['filters','params','options'].forEach((k) => {
+        if (k in config && config[k] != null && typeof config[k] !== 'object') {
+          throw new Error(`${k} must be an object`);
+        }
+      });
+      const source = await sourceConfigService.upsertSource(name, config);
       res.status(201).json({ name, source });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.delete('/api/sources/:name', (req, res) => {
-    const deleted = sourceConfigService.deleteSource(req.params.name);
+  app.delete('/api/sources/:name', async (req, res) => {
+    const deleted = await sourceConfigService.deleteSource(req.params.name);
     if (!deleted) {
       return res.status(404).json({ error: 'Source not found' });
     }
     return res.status(204).send();
   });
 
-  app.get('/api/scrapers', (req, res) => {
-    res.json({ jobs: jobService.listJobs() });
+  app.get('/api/scrapers', async (req, res) => {
+    const jobs = await jobService.listJobs();
+    res.json({ jobs });
   });
 
   app.post('/api/scrapers', async (req, res) => {
@@ -46,12 +64,13 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
     }
   });
 
-  app.get('/api/jobs', (req, res) => {
-    res.json({ jobs: jobService.listJobs() });
+  app.get('/api/jobs', async (req, res) => {
+    const jobs = await jobService.listJobs();
+    res.json({ jobs });
   });
 
-  app.get('/api/jobs/:id', (req, res) => {
-    const job = jobService.getJob(req.params.id);
+  app.get('/api/jobs/:id', async (req, res) => {
+    const job = await jobService.getJob(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
@@ -62,9 +81,9 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
     res.json({ schedules: schedulerService.getSchedules() });
   });
 
-  app.post('/api/schedulers', (req, res) => {
+  app.post('/api/schedulers', async (req, res) => {
     try {
-      const schedule = schedulerService.addSchedule({
+      const schedule = await schedulerService.addSchedule({
         name: req.body.name,
         source: req.body.source,
         expression: req.body.expression,
@@ -75,8 +94,16 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
     }
   });
 
-  app.get('/api/analysis', (req, res) => {
-    const articles = articleRepository.query({
+  app.delete('/api/schedulers/:name', (req, res) => {
+    const deleted = schedulerService.deleteSchedule(req.params.name);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Schedule not found' });
+    }
+    return res.status(204).send();
+  });
+
+  app.get('/api/analysis', async (req, res) => {
+    const articles = await articleRepository.query({
       source: req.query.source,
       author: req.query.author,
       handle: req.query.handle,

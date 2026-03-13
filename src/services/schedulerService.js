@@ -6,12 +6,16 @@ class SchedulerService {
     this.tasks = new Map();
   }
 
-  addSchedule({ name, source, expression }) {
+  async addSchedule({ name, source, expression }) {
     if (!name || !source || !expression) {
       throw new Error('Schedule name, source, and expression are required');
     }
-    if (!this.crawlService.sourceConfigService.getSource(source)) {
+    const sourceConfig = await this.crawlService.sourceConfigService.getSource(source);
+    if (!sourceConfig) {
       throw new Error('Unknown source');
+    }
+    if (sourceConfig.disabled) {
+      throw new Error('Source is disabled');
     }
     if (!cron.validate(expression)) {
       throw new Error('Invalid cron expression');
@@ -37,6 +41,16 @@ class SchedulerService {
 
   getSchedules() {
     return [...this.tasks.values()].map(({ task, ...schedule }) => schedule);
+  }
+
+  deleteSchedule(name) {
+    const existing = this.tasks.get(name);
+    if (!existing) {
+      return false;
+    }
+    existing.task.stop();
+    this.tasks.delete(name);
+    return true;
   }
 
   stopAll() {

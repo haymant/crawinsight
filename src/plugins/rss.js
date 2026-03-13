@@ -4,7 +4,9 @@ function normalizeContextKey(key) {
   return key.endsWith('s') ? key.slice(0, -1) : key;
 }
 
-function buildExpansionContexts(params = {}) {
+function buildExpansionContexts(params) {
+  // params may be null (saved from DB); coerce to object
+  params = params || {};
   const keys = Object.keys(params);
   if (keys.length === 0) {
     return [{}];

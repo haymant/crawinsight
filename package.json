@@ -16,9 +16,13 @@
     "axios": "^1.8.4",
     "crawlee": "^3.13.6",
     "dotenv": "^16.1.4",
+    "drizzle-orm": "^0.45.1",
     "express": "^4.21.2",
     "js-yaml": "^4.1.0",
     "node-cron": "^4.2.1",
+    "parquetjs-lite": "^0.8.7",
+    "pg": "^8.20.0",
+    "pg-boss": "^12.14.0",
     "playwright": "^1.58.2",
     "vader-sentiment": "^1.1.3",
     "xml2js": "^0.6.2"
@@ -26,6 +30,7 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "nock": "^14.0.2",
+    "drizzle-kit": "^0.31.9",
     "supertest": "^7.1.0"
   }
 }

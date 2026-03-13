@@ -74,6 +74,21 @@ describe('API', () => {
     expect(analysisResponse.status).toBe(200);
     // asset-specific results may be zero, that's acceptable
 
+    const jobsResponse = await request(app).get('/api/jobs');
+    expect(jobsResponse.status).toBe(200);
+    expect(jobsResponse.body.jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.any(String),
+          type: 'scrape',
+          payload: expect.objectContaining({ source: 'google-news' }),
+          status: expect.stringMatching(/queued|completed|completed_with_errors/),
+          createdAt: expect.any(String),
+          updatedAt: expect.any(String),
+        }),
+      ])
+    );
+
   });
 
   test('validates scheduler input', async () => {

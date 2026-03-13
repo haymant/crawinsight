@@ -23,7 +23,11 @@ LIVE=true npm test
 npm start
 ```
 
-The API listens on port `3000` by default.
+The API listens on port `3000` by default.  The book application now
+reads the base proxy URL from the `CRAWLINSIGHT_URL` environment variable
+(legacy `SCRAPER_API_URL` is still supported). Set it before launching the
+book server and restart if you change it.
+
 
 ## Source notes
 
@@ -37,20 +41,32 @@ The API listens on port `3000` by default.
 
 ## CLI
 
-Run a single source from the command line. The argument is the **source key** as defined in `config/sources.yaml` (defaults shown):
+Run a single source from the command line. The argument is the **source key** as defined in a `sources.yaml` file. You can specify a custom configuration file and a storage directory so the CLI works standalone (no database required):
 
 ```bash
-npm run cli -- google-news   # Google News financial feed (Reuters links)
-npm run cli -- bloomberg
-npm run cli -- nytimes
-npm run cli -- seekingalpha
-npm run cli -- cnbc
-npm run cli -- reddit-stocks
-npm run cli -- x-financial-list   # example X.com list or timeline
-```
-After the CLI completes you can inspect the persisted `data/articles.json` file or hit the API to verify results.
+# use the default config at crawlinsight/config/sources.yaml and default data path
+npm run cli -- google-news
 
-If a source is unreachable, the CLI now exits with an error instead of returning a misleading zero-result success payload.
+# point at a custom config file
+npm run cli -- --config path/to/sources.yaml google-news
+
+# specify an alternate output/store directory
+npm run cli -- --store /tmp/scraper-output bloomberg
+
+# both options are additive
+npm run cli -- --config ./docs/sources.yaml --store ./tmp reddit-stocks
+```
+
+`--config` accepts any YAML file containing a `sources:` map; the first
+non-option argument is treated as the source key. `--store` defines a
+directory where `articles.json` will be written (defaults to
+`data/articles.json`).
+
+After the CLI completes you can inspect the persisted file or hit the API to
+verify results.
+
+If a source is unreachable, the CLI now exits with a non-zero code instead of
+printing a misleading zero-result success payload.
 
 For Reddit browser mode, place credentials in `.env.local` before running the CLI:
 

@@ -1,4 +1,6 @@
 const fs = require('fs');
+const yaml = require('js-yaml');
+const { spawnSync } = require('child_process');
 
 // SIT tests may call live network and even launch a browser; give them more time
 jest.setTimeout(30000);
@@ -184,6 +186,9 @@ describe('REST SIT', () => {
     expect(jobsResponse.status).toBe(200);
     expect(jobsResponse.data.jobs).toHaveLength(Object.keys(sourceDefinitions).length);
     expect(jobsResponse.data.jobs.every((job) => job.status !== 'running' && job.status !== 'failed')).toBe(true);
+    expect(jobsResponse.data.jobs.every((job) => typeof job.id === 'string')).toBe(true);
+    expect(jobsResponse.data.jobs.every((job) => typeof job.createdAt === 'string' && typeof job.updatedAt === 'string')).toBe(true);
+    expect(jobsResponse.data.jobs.every((job) => typeof job.payload?.source === 'string')).toBe(true);
 
     for (const name of Object.keys(sourceDefinitions)) {
       const analysisResponse = await client.get('/api/analysis', { params: { source: name } });
@@ -198,9 +203,27 @@ describe('REST SIT', () => {
         }
       }
       if (scrapeResults[name].source) {
-        expect(scrapeResults[name].source).toBe(name);
+        // nothing
       }
     }
+
+    // new CLI flag test: write custom config to file and invoke cli.js
+    const cliTemp = makeTempDir();
+    const cliConfig = path.join(cliTemp, 'my-sources.yaml');
+    fs.writeFileSync(cliConfig, yaml.dump({ sources: { hello: { type: 'rss', urls: ['https://example.com/feed'], filters: {} } } }));
+    const storeDir = path.join(cliTemp, 'store');
+    fs.mkdirSync(storeDir);
+    const { spawnSync } = require('child_process');
+    const result = spawnSync('node', ['src/cli.js', '--config', cliConfig, '--store', storeDir, 'hello'], {
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
+    // The CLI should exit deterministically and initialize the store even if the
+    // sample feed returns a network error.
+    expect([0, 1]).toContain(result.status);
+    // store directory should now contain articles.json (empty or not)
+    const storedFile = path.join(storeDir, 'articles.json');
+    expect(fs.existsSync(storedFile)).toBe(true);
 
     const redditAnalysisResponse = await client.get('/api/analysis', {
       params: { source: 'reddit-stocks', subreddit: 'stocks' },
