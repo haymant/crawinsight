@@ -79,36 +79,6 @@ export const daily_asset_sentiment = pgTable("daily_asset_sentiment", {
   article_count: integer("article_count").default(1),
 });
 
-export const crawlArticles = pgTable("crawl_articles", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  link: text("link").notNull(),
-  published_at: timestamp("published_at", { withTimezone: true }).notNull(),
-  source: text("source").notNull(),
-  full_content_path: text("full_content_path"),
-  summary: text("summary"),
-  raw_assets: text("raw_assets").array(),
-  linked_article_ids: text("linked_article_ids").array(),
-  crawl_depth: integer("crawl_depth").default(1).notNull(),
-  ingested_at: timestamp("ingested_at", { withTimezone: true }).defaultNow().notNull(),
-  is_relevant: boolean("is_relevant").default(true).notNull(),
-  metadata: jsonb("metadata"),
-}, (table) => ({
-  linkUnique: uniqueIndex("crawl_articles_link_unique").on(table.link),
-}));
-
-export const articleMentions = pgTable("article_mentions", {
-  id: serial("id").primaryKey(),
-  article_id: text("article_id").references(() => crawlArticles.id),
-  symbol: text("symbol").notNull(),
-  context_snippet: text("context_snippet"),
-  vader_compound: doublePrecision("vader_compound"),
-  llm_score: doublePrecision("llm_score"),
-  final_score: doublePrecision("final_score"),
-  mention_offset: integer("mention_offset"),
-  created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
 export const dailySentimentFeatures = pgTable("daily_sentiment_features", {
   id: serial("id").primaryKey(),
   feature_date: timestamp("feature_date", { withTimezone: true }).notNull(),
@@ -136,26 +106,6 @@ export const realtimeFeatures = pgTable("realtime_features", {
   z_mention_density: doublePrecision("z_mention_density"),
   z_sentiment_momentum_1d: doublePrecision("z_sentiment_momentum_1d"),
   decay_half_life_hours: integer("decay_half_life_hours").default(4).notNull(),
-});
-
-export const featureStats = pgTable("feature_stats", {
-  id: serial("id").primaryKey(),
-  symbol: text("symbol").notNull(),
-  feature_name: text("feature_name").notNull(),
-  window_days: integer("window_days").default(252).notNull(),
-  mean_value: doublePrecision("mean_value"),
-  std_dev_value: doublePrecision("std_dev_value"),
-  computed_at: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-export const price_history = pgTable("price_history", {
-  asset_symbol: varchar("asset_symbol", { length: 20 }).notNull(),
-  day_date: date("day_date").notNull(),
-  open: doublePrecision("open"),
-  high: doublePrecision("high"),
-  low: doublePrecision("low"),
-  close: doublePrecision("close"),
-  volume: bigint("volume", { mode: "number" }),
 });
 
 // chat-related tables defined in the SQL dump
@@ -216,29 +166,14 @@ export const suggestion = pgTable("Suggestion", {
 });
 
 
-// Deprecated operational tables kept only for legacy data migration.
-// New CrawlInsight control flow is source-driven via YAML + CrawlInsight APIs.
-export const channels = pgTable("channels", {
-  channel_id: varchar("channel_id", { length: 64 }).primaryKey(),
-  name: text("name").notNull(),
-  owner: text("owner"),
-  storage_id: varchar("storage_id", { length: 64 }).references(() => storages.storage_id),
-  category: text("category").notNull(),
-  access_method: text("access_method"),
-  auth_mode: text("auth_mode"),
-  rate_limit_policy: text("rate_limit_policy"),
-  parser_profile: text("parser_profile"),
-  cadence: text("cadence"),
-  config: jsonb("config"),
-  created_at: timestamp("created_at").defaultNow(),
-  updated_at: timestamp("updated_at").defaultNow(),
-});
+// Legacy schemas were used for the original channel/job UI but are now replaced by the CrawlInsight service.
+// The following table definitions are retained for historical reference only.
 
 export const articles = pgTable("articles", {
   // article_id is manually backed by a sequence; migration 0001_add_article_seq
   // sets up the default. bigserial helper is not available in drizzle-kit.
   article_id: bigint("article_id", { mode: "number" }).primaryKey(),
-  channel_id: varchar("channel_id", { length: 64 }).references(() => channels.channel_id),
+  channel_id: varchar("channel_id", { length: 64 }),
   url: varchar("url", { length: 2048 }).notNull(),
   content_hash: varchar("content_hash", { length: 64 }).notNull(),
   analysis: text("analysis"),
@@ -271,13 +206,6 @@ export const sentimentAnalysis = pgTable("sentiment_analysis", {
 }, (table) => ({
   pk: primaryKey({ columns: [table.asset_id, table.article_id, table.published_at] }),
 }));
-
-export const channel_schedule = pgTable("channel_schedule", {
-  channel_id: varchar("channel_id", { length: 64 }).primaryKey(),
-  cron_expr: text("cron_expr").notNull(),
-  timezone: text("timezone").default('UTC'),
-  last_run: timestamp("last_run"),
-});
 
 export const crawlinsight_sources = pgTable("crawlinsight_sources", {
   name: text("name").primaryKey(),
@@ -344,16 +272,6 @@ export const crawlinsight_article_mentions = pgTable("crawlinsight_article_menti
   mention_offset: integer("mention_offset"),
   published_at: timestamp("published_at", { mode: "string" }),
   created_at: timestamp("created_at", { mode: "string" }).defaultNow(),
-});
-
-export const scrapeJobs = pgTable("scrape_jobs", {
-  job_id: varchar("job_id", { length: 36 }).primaryKey(),
-  channel_id: varchar("channel_id", { length: 64 }).references(() => channels.channel_id),
-  status: text("status").notNull(),
-  created_at: timestamp("created_at").defaultNow(),
-  started_at: timestamp("started_at"),
-  finished_at: timestamp("finished_at"),
-  error: text("error"),
 });
 
 // ==== finance/accounting schema derived from 001_create_schema.sql ====
