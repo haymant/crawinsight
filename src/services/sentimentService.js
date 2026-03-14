@@ -105,6 +105,10 @@ class SentimentService {
       const featureRows = buildDailyFeatureRows(mentions, recentRows);
       await this.featureRepository.upsertMany(featureRows);
 
+      console.log(
+        `[Sentiment] upserted ${featureRows.length} feature rows for ${payload.source || 'unknown'} (articles=${articles.length}, mentions=${mentions.length})`
+      );
+
       const result = {
         source: payload.source || null,
         articleCount: articles.length,

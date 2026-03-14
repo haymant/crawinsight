@@ -57,7 +57,8 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
 
   app.post('/api/scrapers', async (req, res) => {
     try {
-      const result = await crawlService.runSource(req.body.source);
+      const forceInline = req.body?.forceInline === true;
+      const result = await crawlService.runSource(req.body.source, { forceInline });
       res.json(result);
     } catch (error) {
       res.status(400).json({ error: error.message });

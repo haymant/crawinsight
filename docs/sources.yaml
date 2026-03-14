@@ -14,7 +14,6 @@ sources:
     concurrency: 2
     urls:
       - https://www.bloomberg.com/feeds/bbiz/sitemap_news.xml
-      - https://www.bloomberg.com/feeds/economy/sitemap_news.xml
     headers:
       userAgent: Mozilla/5.0
     filters:

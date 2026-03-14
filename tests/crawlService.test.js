@@ -4,6 +4,11 @@ const axios = require('axios');
 const nock = require('nock');
 const yaml = require('js-yaml');
 const useLive = Boolean(process.env.LIVE);
+
+jest.mock('../src/db', () => ({
+  db: { execute: jest.fn() },
+}));
+
 const { buildServices } = require('../src/bootstrap');
 const { CrawlService } = require('../src/core/crawlService');
 const { makeTempDir } = require('./helpers');
@@ -270,6 +275,69 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
         result: expect.objectContaining({ storedCount: 2 }),
       })
     );
+  });
+
+  test('uses storage config base_path for raw content when source.storeDir set', async () => {
+    const tempDir = makeTempDir();
+    const oldCwd = process.cwd();
+    process.chdir(tempDir);
+    try {
+      const configPath = path.join(tempDir, 'sources.yaml');
+      fs.writeFileSync(
+        configPath,
+        `sources:\n  google-news:\n    type: rss\n    storeDir: my-storage\n    urls:\n      - https://news.google.com/rss/search?q=site:reuters.com%20business\n`
+      );
+
+      const { db } = require('../src/db');
+      db.execute.mockResolvedValueOnce({
+        rows: [
+          {
+            storage_id: 'my-storage',
+            type: 'filesystem',
+            config: { base_path: tempDir },
+          },
+        ],
+      });
+
+      if (!useLive) {
+        nock('https://news.google.com')
+          .get('/rss/search?q=site:reuters.com%20business')
+          .reply(200, googleFixture);
+      }
+
+      const services = buildServices({
+        configPath,
+        dataPath: path.join(tempDir, 'articles.json'),
+        queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+        jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+        sourceConfigService: makeYamlService(configPath),
+      });
+
+      await services.crawlService.runSource('google-news');
+
+      const rawRoot = path.join(tempDir, 'raw', 'my-storage');
+      expect(fs.existsSync(rawRoot)).toBe(true);
+
+      const findFiles = (dir) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        let result = [];
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            result = result.concat(findFiles(full));
+          } else if (entry.isFile()) {
+            result.push(full);
+          }
+        }
+        return result;
+      };
+
+      const rawFiles = findFiles(rawRoot);
+      expect(rawFiles.length).toBeGreaterThan(0);
+      expect(rawFiles.some((f) => f.includes('google-news'))).toBe(true);
+    } finally {
+      process.chdir(oldCwd);
+    }
   });
 
   test('inline sentiment analysis persists distinct multi-asset mentions and feature rows', async () => {

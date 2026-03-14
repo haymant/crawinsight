@@ -29,7 +29,11 @@ async function main() {
 
   const overrides = {};
   if (configPath) overrides.configPath = configPath;
-  if (storeDir) overrides.dataPath = require('path').join(storeDir, 'articles.json');
+  if (storeDir) {
+    const path = require('path');
+    overrides.dataPath = path.join(storeDir, 'articles.json');
+    overrides.rawContentPath = path.join(storeDir, 'raw');
+  }
 
   const services = buildServices(overrides);
 

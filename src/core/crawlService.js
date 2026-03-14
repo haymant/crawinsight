@@ -1,9 +1,11 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const path = require('path');
 const { BasicCrawler } = require('crawlee');
 const { sql } = require('drizzle-orm');
 const { getPlugin } = require('../plugins');
 const { analyzeArticle } = require('../services/analysisService');
+const { RawContentStore } = require('../storage/rawContentStore');
 
 class CrawlService {
   constructor({ sourceConfigService, articleRepository, sentimentService, jobService, rawContentStore, queueService }) {
@@ -13,6 +15,42 @@ class CrawlService {
     this.jobService = jobService;
     this.rawContentStore = rawContentStore;
     this.queueService = queueService;
+  }
+
+  async resolveRawContentStore(source) {
+    if (!source?.storeDir) {
+      return this.rawContentStore;
+    }
+
+    // If a storage record exists, prefer it; otherwise, treat storeDir as a relative
+    // subfolder under the existing raw content path.
+    const rootBase = this.rawContentStore?.basePath || process.cwd();
+    const ensureRawDir = (base) => {
+      if (!base) return base;
+      const normalized = String(base);
+      const last = path.basename(normalized).toLowerCase();
+      if (last === 'raw') return normalized;
+      return path.join(normalized, 'raw');
+    };
+
+    try {
+      const { db } = require('../db');
+      if (db && typeof db.execute === 'function') {
+        const result = await db.execute(sql`SELECT * FROM storages WHERE storage_id = ${source.storeDir}`);
+        const storage = (result?.rows || [])[0];
+        if (storage && storage.type === 'filesystem') {
+          const config = storage.config || {};
+          const base = String(config.base_path || config.path || config.basePath || '').trim();
+          const rawBase = ensureRawDir(base || rootBase);
+          return new RawContentStore(path.join(rawBase, source.storeDir));
+        }
+      }
+    } catch (e) {
+      console.error('failed to resolve raw content store for storeDir', source.storeDir, e);
+    }
+
+    const rawBase = ensureRawDir(rootBase);
+    return new RawContentStore(path.join(rawBase, source.storeDir));
   }
 
   async runSource(sourceName, options = {}) {
@@ -41,7 +79,10 @@ class CrawlService {
       return { jobId: job.id, queueId: queueId || null, status: 'queued' };
     }
 
-    return this.processJob(job.id, sourceName, source);
+    return this.processJob(job.id, sourceName, source, {
+      queueId: null,
+      forceInline: options.forceInline || false,
+    });
   }
 
   async processQueuedJob(job) {
@@ -61,7 +102,7 @@ class CrawlService {
       return;
     }
 
-    await this.processJob(jobId, sourceName, source, { queueId: job.id || null });
+    await this.processJob(jobId, sourceName, source, { queueId: job.id || null, forceInline: false });
   }
 
   async processJob(jobId, sourceName, source, metadata = {}) {
@@ -76,13 +117,14 @@ class CrawlService {
     });
 
     try {
-      const result = await this.executeSource(sourceName, source);
+      const rawContentStore = await this.resolveRawContentStore(source);
+      const result = await this.executeSource(sourceName, source, { rawContentStore });
       if (this.sentimentService && result.articleIds?.length) {
         result.analysis = await this.sentimentService.requestAnalysis({
           source: sourceName,
           articleIds: result.articleIds,
           parentJobId: jobId,
-          forceInline: !this.queueService?.isEnabled(),
+          forceInline: metadata.forceInline ?? !this.queueService?.isEnabled(),
         });
       }
       const status = result.failedRequestCount > 0 ? 'completed_with_errors' : 'completed';
@@ -104,7 +146,7 @@ class CrawlService {
     }
   }
 
-  async executeSource(sourceName, source) {
+  async executeSource(sourceName, source, options = {}) {
     const plugin = getPlugin(source.type);
     const requests = plugin.expandRequests(source);
     const runId = `${sourceName}:${Date.now()}`;
@@ -112,6 +154,7 @@ class CrawlService {
     const failedRequests = [];
     let successfulRequests = 0;
     const crawlService = this;
+    const rawContentStore = options.rawContentStore || this.rawContentStore;
 
     const useBrowser = source.options?.browser && typeof plugin.fetchWithBrowser === 'function';
     const crawler = new BasicCrawler({
@@ -134,8 +177,8 @@ class CrawlService {
           contentType = response.headers['content-type'];
         }
 
-        const rawContentPath = crawlService.rawContentStore
-          ? crawlService.rawContentStore.write({
+        const rawContentPath = rawContentStore
+          ? rawContentStore.write({
               sourceName,
               url: request.url,
               body,
@@ -197,7 +240,7 @@ class CrawlService {
         }
         if (storage && storage.type === 'filesystem') {
           const config = storage.config || {};
-          const base = String(config.base_path || config.path || '').trim();
+          const base = String(config.base_path || config.path || config.basePath || '').trim();
           if (base) {
             const { ArticleRepository } = require('../storage/articleRepository');
             const path = require('path');

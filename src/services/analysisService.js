@@ -93,6 +93,12 @@ function extractMentionCandidates(article, options = {}) {
     ...extractAssets(text),
   ].filter(Boolean))];
 
+  // If no asset symbols were detected, fall back to the source (or a generic "ALL") to
+  // ensure we still generate daily features for the article.
+  if (symbols.length === 0) {
+    symbols.push(article.source || 'ALL');
+  }
+
   const mentions = [];
   for (const symbol of symbols) {
     const regex = new RegExp(`\\$?${escapeRegExp(symbol)}\\b`, 'g');
