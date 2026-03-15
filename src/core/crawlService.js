@@ -82,6 +82,7 @@ class CrawlService {
     return this.processJob(job.id, sourceName, source, {
       queueId: null,
       forceInline: options.forceInline || false,
+      maxCrawlDepth: Number.isInteger(options.maxCrawlDepth) ? options.maxCrawlDepth : undefined,
     });
   }
 
@@ -105,26 +106,26 @@ class CrawlService {
     await this.processJob(jobId, sourceName, source, { queueId: job.id || null, forceInline: false });
   }
 
-  async processJob(jobId, sourceName, source, metadata = {}) {
+  async processJob(jobId, sourceName, source, options = {}) {
     console.log(`processing job ${jobId} for source ${sourceName}`);
     if (source.storeDir) {
       console.log(`source has custom storeDir=${source.storeDir}`);
     }
     await this.jobService.updateJob(jobId, {
       status: 'running',
-      queueId: metadata.queueId || null,
+      queueId: options.queueId || null,
       startedAt: new Date().toISOString(),
     });
 
     try {
       const rawContentStore = await this.resolveRawContentStore(source);
-      const result = await this.executeSource(sourceName, source, { rawContentStore });
+      const result = await this.executeSource(sourceName, source, { rawContentStore, maxCrawlDepth: options.maxCrawlDepth });
       if (this.sentimentService && result.articleIds?.length) {
         result.analysis = await this.sentimentService.requestAnalysis({
           source: sourceName,
           articleIds: result.articleIds,
           parentJobId: jobId,
-          forceInline: metadata.forceInline ?? !this.queueService?.isEnabled(),
+          forceInline: options.forceInline ?? !this.queueService?.isEnabled(),
         });
       }
       const status = result.failedRequestCount > 0 ? 'completed_with_errors' : 'completed';
@@ -134,7 +135,7 @@ class CrawlService {
         result,
         finishedAt: new Date().toISOString(),
       });
-      return { jobId, queueId: metadata.queueId || null, status, ...result };
+      return { jobId, queueId: options.queueId || null, status, ...result };
     } catch (error) {
       console.error(`job ${jobId} failed:`, error.message);
       await this.jobService.updateJob(jobId, {
@@ -155,6 +156,13 @@ class CrawlService {
     let successfulRequests = 0;
     const crawlService = this;
     const rawContentStore = options.rawContentStore || this.rawContentStore;
+
+    const maxCrawlDepth = Math.max(
+      1,
+      Number.isInteger(options.maxCrawlDepth)
+        ? options.maxCrawlDepth
+        : source.options?.maxCrawlDepth || 1
+    );
 
     const useBrowser = source.options?.browser && typeof plugin.fetchWithBrowser === 'function';
     const crawler = new BasicCrawler({
@@ -178,7 +186,7 @@ class CrawlService {
         }
 
         const rawContentPath = rawContentStore
-          ? rawContentStore.write({
+          ? await rawContentStore.write({
               sourceName,
               url: request.url,
               body,
@@ -195,7 +203,7 @@ class CrawlService {
             analyzed.id = CrawlService.createArticleId(analyzed.link || analyzed.title || request.url);
             analyzed.fullContentPath = rawContentPath;
             analyzed.linkedArticleIds = Array.isArray(analyzed.linkedArticleIds) ? analyzed.linkedArticleIds : [];
-            analyzed.crawlDepth = source.options?.maxCrawlDepth || 1;
+            analyzed.crawlDepth = 1;
             analyzed.ingestedAt = new Date().toISOString();
             analyzedArticles.push(analyzed);
           }
@@ -222,6 +230,30 @@ class CrawlService {
     }
 
     console.log(`executeSource result for ${sourceName}: ${successfulRequests} success, ${failedRequests.length} failures`);
+
+    // Follow linked article URLs up to maxCrawlDepth (default 1).
+    if (maxCrawlDepth > 1 && rawContentStore) {
+      const processedIds = new Set(analyzedArticles.map((a) => a.id));
+      const additionalArticles = [];
+
+      for (const article of [...analyzedArticles]) {
+        if (!article.link || article.crawlDepth >= maxCrawlDepth) continue;
+        const child = await this._fetchLinkedArticle({
+          parentArticle: article,
+          sourceName,
+          rawContentStore,
+          maxDepth: maxCrawlDepth,
+          processedIds,
+        });
+        if (child) {
+          additionalArticles.push(child);
+        }
+      }
+
+      if (additionalArticles.length > 0) {
+        analyzedArticles.push(...additionalArticles);
+      }
+    }
 
     // Articles must always land in the primary repository so downstream
     // sentiment analysis can read them back. A filesystem storeDir is treated
@@ -266,6 +298,60 @@ class CrawlService {
       failedRequestCount: failedRequests.length,
       failures: failedRequests,
     };
+  }
+
+  async _fetchLinkedArticle({ parentArticle, sourceName, rawContentStore, maxDepth, processedIds }) {
+    if (!parentArticle?.link) return null;
+    const nextDepth = (parentArticle.crawlDepth || 1) + 1;
+    if (nextDepth > maxDepth) return null;
+
+    const url = parentArticle.link;
+    const id = CrawlService.createArticleId(`${url}|depth=${nextDepth}`);
+    if (processedIds.has(id)) return null;
+    processedIds.add(id);
+
+    let body;
+    let contentType;
+    try {
+      const response = await axios.get(url, { timeout: 15000 });
+      body = response.data;
+      contentType = response.headers['content-type'];
+    } catch (e) {
+      // If we can't fetch the linked content, silently skip it.
+      return null;
+    }
+
+    const rawContentPath = rawContentStore
+      ? await rawContentStore.write({
+          sourceName,
+          url,
+          body,
+          contentType,
+          capturedAt: new Date().toISOString(),
+        })
+      : null;
+
+    const child = {
+      id,
+      source: sourceName,
+      title: parentArticle.title || url,
+      link: url,
+      publishedAt: parentArticle.publishedAt || null,
+      fullContentPath: rawContentPath,
+      summary: '',
+      rawAssets: parentArticle.rawAssets || [],
+      linkedArticleIds: [],
+      crawlDepth: nextDepth,
+      ingestedAt: new Date().toISOString(),
+      isRelevant: true,
+    };
+
+    parentArticle.linkedArticleIds = Array.isArray(parentArticle.linkedArticleIds)
+      ? parentArticle.linkedArticleIds
+      : [];
+    parentArticle.linkedArticleIds.push(id);
+
+    return child;
   }
 
   static createArticleId(value) {

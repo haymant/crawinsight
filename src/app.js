@@ -58,7 +58,8 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
   app.post('/api/scrapers', async (req, res) => {
     try {
       const forceInline = req.body?.forceInline === true;
-      const result = await crawlService.runSource(req.body.source, { forceInline });
+      const maxCrawlDepth = Number.isInteger(req.body?.maxCrawlDepth) ? req.body.maxCrawlDepth : undefined;
+      const result = await crawlService.runSource(req.body.source, { forceInline, maxCrawlDepth });
       res.json(result);
     } catch (error) {
       res.status(400).json({ error: error.message });

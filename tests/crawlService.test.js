@@ -77,11 +77,62 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
     if (!useLive) {
       // fixture run, ensure we at least created a job and it completed
       expect(result.jobId).toBeDefined();
+      expect(articles.length).toBeGreaterThan(0);
+      expect(articles[0].fullContentPath).toMatch(/\.xml$/);
     } else {
       // live run: just ensure job returned
       expect(result.jobId).toBeDefined();
     }
 
+  });
+
+  test('follows linked article URLs when maxCrawlDepth is set', async () => {
+    if (useLive) {
+      // Skip live executions, this test relies on mocked HTTP requests.
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const feedUrl = 'https://example.com/feed.xml';
+    const articleUrl = 'https://example.com/article/1';
+
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  rss-depth:\n    type: rss\n    urls:\n      - ${feedUrl}\n    options:\n      maxCrawlDepth: 2\n`
+    );
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Test</title><item><title>Test item</title><link>${articleUrl}</link><pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate><description>Test description</description></item></channel></rss>`;
+
+    nock('https://example.com')
+      .get('/feed.xml')
+      .reply(200, feedXml);
+
+    nock('https://example.com')
+      .get('/article/1')
+      .reply(200, '<html><body>Deep content</body></html>', { 'content-type': 'text/html' });
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('rss-depth', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'rss-depth' });
+
+    // We expect two stored articles: the original feed item (depth 1) and the linked content (depth 2).
+    expect(articles.length).toBe(2);
+
+    const depth2Id = CrawlService.createArticleId(`${articleUrl}|depth=2`);
+    const depth1 = articles.find((a) => a.crawlDepth === 1);
+    const depth2 = articles.find((a) => a.crawlDepth === 2);
+
+    expect(depth1).toBeDefined();
+    expect(depth2).toBeDefined();
+    expect(depth1.linkedArticleIds).toContain(depth2Id);
   });
 
   test('expands transcript sources by ticker', async () => {

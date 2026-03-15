@@ -42,7 +42,7 @@ sources:
       maxItemsPerFeed: 20
   seekingalpha:
     displayName: Seeking Alpha
-    type: transcripts
+    type: rss
     concurrency: 2
     urls:
       - https://seekingalpha.com/symbol/{ticker}.xml
@@ -96,6 +96,7 @@ sources:
         - fed
     options:
       maxItemsPerFeed: 15
+      maxCrawlDepth: 1
       browser: true
   x-financial-list:
     displayName: X Financial List Example
