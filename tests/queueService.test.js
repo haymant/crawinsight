@@ -56,4 +56,28 @@ describe('QueueService', () => {
     await handler([fakeJob]);
     expect(calls).toEqual([fakeJob]);
   });
+
+  test('publish uses configured pg-boss job options', async () => {
+    process.env.CRAWLINSIGHT_JOB_EXPIRE_SECONDS = '123';
+    process.env.CRAWLINSIGHT_JOB_RETRY_LIMIT = '2';
+    process.env.CRAWLINSIGHT_JOB_RETRY_DELAY = '15';
+
+    const q = new QueueService(null);
+    q.boss = {
+      start: jest.fn().mockResolvedValue(undefined),
+      send: jest.fn().mockResolvedValue('job-1'),
+    };
+
+    const id = await q.publish('sentiment-judge', { foo: 'bar' });
+    expect(id).toBe('job-1');
+    expect(q.boss.send).toHaveBeenCalledWith(
+      'sentiment-judge',
+      { foo: 'bar' },
+      expect.objectContaining({ expireInSeconds: 123, retryLimit: 2, retryDelay: 15 })
+    );
+
+    delete process.env.CRAWLINSIGHT_JOB_EXPIRE_SECONDS;
+    delete process.env.CRAWLINSIGHT_JOB_RETRY_LIMIT;
+    delete process.env.CRAWLINSIGHT_JOB_RETRY_DELAY;
+  });
 });

@@ -133,6 +133,369 @@ fs.writeFileSync(configPath, `sources:\n  google-news:\n    type: rss\n    urls:
     expect(depth1).toBeDefined();
     expect(depth2).toBeDefined();
     expect(depth1.linkedArticleIds).toContain(depth2Id);
+    expect(depth1.metadata).toEqual(
+      expect.objectContaining({
+        depth2Success: true,
+        depth2Reason: 'fetched',
+        maxCrawlDepth: 2,
+      })
+    );
+    expect(depth2.metadata).toEqual(
+      expect.objectContaining({
+        parentArticleId: depth1.id,
+        depth2Success: true,
+        fetchMode: 'http',
+      })
+    );
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 1,
+      succeeded: 1,
+      skippedByGate: 0,
+    });
+  });
+
+  test('skips depth-2 follow when relevanceKeywords do not match', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const feedUrl = 'https://example.com/relevance-feed.xml';
+    const articleUrl = 'https://example.com/article/retail';
+
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  rss-gated:\n    type: rss\n    urls:\n      - ${feedUrl}\n    options:\n      maxCrawlDepth: 2\n      relevanceKeywords: [oil, tanker]\n`
+    );
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Test</title><item><title>Retail sales improve in March</title><link>${articleUrl}</link><pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate><description>Consumer spending rose.</description></item></channel></rss>`;
+
+    nock('https://example.com')
+      .get('/relevance-feed.xml')
+      .reply(200, feedXml);
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('rss-gated', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'rss-gated' });
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].metadata).toEqual(
+      expect.objectContaining({
+        depth2Success: false,
+        depth2Reason: 'keyword-miss',
+      })
+    );
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 0,
+      succeeded: 0,
+      skippedByGate: 1,
+    });
+  });
+
+  test('uses plugin linked-article browser fallback when http fetch fails', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const tweetUrl = 'https://x.com/markets/status/1912345678901234567';
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  x-depth:\n    type: x\n    urls:\n      - https://x.com/i/lists/2030824480940146987\n    filters:\n      keywords: [Fed]\n    options:\n      browser: true\n      maxCrawlDepth: 2\n      linkedArticleBrowserFallback: true\n`
+    );
+
+    const plugin = require('../src/plugins').getPlugin('x');
+    const listingSpy = jest.spyOn(plugin, 'fetchWithBrowser').mockResolvedValue([
+      {
+        title: 'Fed signals slower cuts',
+        link: tweetUrl,
+        publishedAt: '2026-03-09T10:00:00.000Z',
+        summary: 'Fed signals slower cuts',
+        content: 'Fed signals slower cuts and markets reprice yields.',
+        author: 'Markets Desk',
+        handle: 'markets',
+        listId: '2030824480940146987',
+      },
+    ]);
+    const fallbackSpy = jest.spyOn(plugin, 'fetchLinkedArticleWithBrowser').mockResolvedValue({
+      body: '<html><body>tweet detail</body></html>',
+      contentType: 'text/html; charset=utf-8',
+    });
+
+    jest.spyOn(axios, 'get').mockRejectedValueOnce(new Error('blocked'));
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('x-depth', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'x-depth' });
+    const depth2 = articles.find((article) => article.crawlDepth === 2);
+
+    expect(listingSpy).toHaveBeenCalled();
+    expect(fallbackSpy).toHaveBeenCalledWith(tweetUrl, expect.any(Object));
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 1,
+      succeeded: 1,
+      skippedByGate: 0,
+    });
+    expect(depth2.metadata).toEqual(
+      expect.objectContaining({
+        fetchMode: 'fallback',
+        depth2Success: true,
+      })
+    );
+  });
+
+  test('uses browser fetch first when linkedArticleBrowserFallback is always', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  rss-browser-first:\n    type: rss\n    urls:\n      - https://example.com/feed.xml\n    filters:\n      keywords: [market]\n    options:\n      maxCrawlDepth: 2\n      linkedArticleBrowserFallback: always\n`
+    );
+
+    const rssPlugin = require('../src/plugins').getPlugin('rss');
+    const browserSpy = jest
+      .spyOn(rssPlugin, 'fetchLinkedArticleWithBrowser')
+      .mockResolvedValue({ body: '<html><body>article</body></html>', contentType: 'text/html; charset=utf-8' });
+
+    // Feed request should still be fetched via HTTP.
+    const fakeFeed = `<?xml version="1.0"?><rss><channel><item><title>Market news</title><link>https://example.com/article</link><description>market</description></item></channel></rss>`;
+    const axiosSpy = jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: fakeFeed, headers: { 'content-type': 'application/rss+xml' }, status: 200 });
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('rss-browser-first', { forceInline: true, maxCrawlDepth: 2 });
+
+    expect(axiosSpy).toHaveBeenCalledTimes(1); // only for feed
+    expect(browserSpy).toHaveBeenCalledTimes(1); // used for depth-2 fetch
+    expect(result.depth2.followed).toBe(1);
+    expect(result.depth2.succeeded).toBe(1);
+  });
+
+  test('resolves Google News wrapper pages before storing depth-2 articles', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const feedUrl = 'https://news.google.com/rss/search?q=site:reuters.com%20markets';
+    const googleWrapperUrl = 'https://news.google.com/rss/articles/CBMi-test?oc=5';
+    const publisherUrl = 'https://www.reuters.com/world/us/resolved-story';
+
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  google-depth:\n    type: rss\n    urls:\n      - ${feedUrl}\n    options:\n      maxCrawlDepth: 2\n      validateDepth2Content: true\n`
+    );
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Google</title><item><title>Oil rises on conflict fears - Reuters</title><link>${googleWrapperUrl}</link><pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate><description>Oil rises on conflict fears.</description><source url="https://www.reuters.com">Reuters</source></item></channel></rss>`;
+
+    nock('https://news.google.com')
+      .get('/rss/search')
+      .query(true)
+      .reply(200, feedXml);
+
+    nock('https://news.google.com')
+      .get('/rss/articles/CBMi-test')
+      .query({ oc: '5' })
+      .reply(
+        200,
+        `<html><head><link rel="canonical" href="${publisherUrl}" /></head><body>Redirecting</body></html>`,
+        { 'content-type': 'text/html; charset=utf-8' }
+      );
+
+    nock('https://www.reuters.com')
+      .get('/world/us/resolved-story')
+      .reply(
+        200,
+        `<html><head><title>Oil rises on conflict fears - Reuters</title></head><body><article><p>Oil rises on conflict fears and market volatility spreads across commodities.</p><p>Reuters said oil and market traders reacted to renewed fears.</p><p>Investors repriced risk across oil, commodities and equities.</p><p>${'Expanded Reuters article body '.repeat(40)}</p></article></body></html>`,
+        { 'content-type': 'text/html; charset=utf-8' }
+      );
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('google-depth', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'google-depth' });
+    const depth1 = articles.find((article) => article.crawlDepth === 1);
+    const depth2 = articles.find((article) => article.crawlDepth === 2);
+    const resolvedDepth2Id = CrawlService.createArticleId(`${publisherUrl}|depth=2`);
+
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 1,
+      succeeded: 1,
+      skippedByGate: 0,
+    });
+    expect(depth1.linkedArticleIds).toContain(resolvedDepth2Id);
+    expect(depth2.link).toBe(publisherUrl);
+    expect(depth2.id).toBe(resolvedDepth2Id);
+    expect(depth2.metadata).toEqual(
+      expect.objectContaining({
+        parentArticleLink: googleWrapperUrl,
+        resolvedArticleLink: publisherUrl,
+        fetchMode: 'http',
+      })
+    );
+  });
+
+  test('reuses browser-loaded publisher HTML after Google News resolves without refetching the publisher URL', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const feedUrl = 'https://news.google.com/rss/search?q=site:reuters.com%20oil';
+    const googleWrapperUrl = 'https://news.google.com/rss/articles/CBMi-browser?oc=5';
+    const publisherUrl = 'https://www.reuters.com/markets/commodities/us-is-quickly-exhausting-tools-absorb-iran-war-oil-shock-2026-03-16/';
+
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  google-browser-resolve:\n    type: rss\n    urls:\n      - ${feedUrl}\n    options:\n      maxCrawlDepth: 2\n      linkedArticleBrowserFallback: always\n      validateDepth2Content: true\n`
+    );
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Google</title><item><title>US is quickly exhausting tools to absorb Iran war oil shock - Reuters</title><link>${googleWrapperUrl}</link><pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate><description>Oil markets and Iran war risks remain in focus.</description><source url="https://www.reuters.com">Reuters</source></item></channel></rss>`;
+
+    nock('https://news.google.com')
+      .get('/rss/search')
+      .query(true)
+      .reply(200, feedXml);
+
+    const rssPlugin = require('../src/plugins').getPlugin('rss');
+    const browserSpy = jest
+      .spyOn(rssPlugin, 'fetchLinkedArticleWithBrowser')
+      .mockResolvedValue({
+        body: `<html><head><title>US is quickly exhausting tools to absorb Iran war oil shock - Reuters</title></head><body><article><p>Oil markets are absorbing the Iran war shock as traders gauge supply risks.</p><p>Reuters reported commodities desks are reassessing crude and shipping exposure.</p><p>Investors across oil, commodities and broader markets are repricing volatility.</p><p>${'Expanded Reuters article body '.repeat(40)}</p></article></body></html>`,
+        contentType: 'text/html; charset=utf-8',
+        resolvedUrl: `${publisherUrl}#main-content`,
+      });
+
+    const axiosSpy = jest.spyOn(axios, 'get');
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('google-browser-resolve', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'google-browser-resolve' });
+    const depth2 = articles.find((article) => article.crawlDepth === 2);
+
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 1,
+      succeeded: 1,
+      skippedByGate: 0,
+    });
+    expect(browserSpy).toHaveBeenCalledTimes(1);
+    expect(axiosSpy).toHaveBeenCalledTimes(1);
+    expect(depth2.link).toBe(publisherUrl);
+    expect(depth2.metadata).toEqual(
+      expect.objectContaining({
+        resolvedArticleLink: publisherUrl,
+        fetchMode: 'browser',
+      })
+    );
+  });
+
+  test('rejects blocked Google depth-2 pages and keeps the RSS snippet only', async () => {
+    if (useLive) {
+      return;
+    }
+
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    const feedUrl = 'https://news.google.com/rss/search?q=site:reuters.com%20fed';
+    const googleWrapperUrl = 'https://news.google.com/rss/articles/CBMi-blocked?oc=5';
+    const publisherUrl = 'https://www.reuters.com/world/us/blocked-story';
+
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  google-blocked:\n    type: rss\n    urls:\n      - ${feedUrl}\n    options:\n      maxCrawlDepth: 2\n      validateDepth2Content: true\n`
+    );
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Google</title><item><title>Fed officials signal slower pace of cuts - Reuters</title><link>${googleWrapperUrl}</link><pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate><description>Fed and rates remain in focus.</description><source url="https://www.reuters.com">Reuters</source></item></channel></rss>`;
+
+    nock('https://news.google.com')
+      .get('/rss/search')
+      .query(true)
+      .reply(200, feedXml);
+
+    nock('https://news.google.com')
+      .get('/rss/articles/CBMi-blocked')
+      .query({ oc: '5' })
+      .reply(200, `<html><head><link rel="canonical" href="${publisherUrl}" /></head><body>Redirecting you for human verification</body></html>`, {
+        'content-type': 'text/html; charset=utf-8',
+      });
+
+    nock('https://www.reuters.com')
+      .get('/world/us/blocked-story')
+      .reply(200, '<html><head><title>Just a moment...</title></head><body>Cloudflare verification. Verify you are human.</body></html>', {
+        'content-type': 'text/html; charset=utf-8',
+      });
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+      queueService: { isEnabled: () => false, publishScrapeJob: async () => null, registerScrapeWorker: async () => {} },
+      jobService: { createJob: () => ({ id: '1' }), updateJob: () => {}, listJobs: async () => [], getJob: async () => null },
+      sourceConfigService: makeYamlService(configPath),
+    });
+
+    const result = await services.crawlService.runSource('google-blocked', { forceInline: true, maxCrawlDepth: 2 });
+    const articles = await services.articleRepository.query({ source: 'google-blocked' });
+
+    expect(result.depth2).toEqual({
+      attempted: 1,
+      followed: 1,
+      succeeded: 0,
+      skippedByGate: 0,
+    });
+    expect(articles).toHaveLength(1);
+    expect(articles[0].metadata).toEqual(
+      expect.objectContaining({
+        depth2Success: false,
+        depth2Reason: 'blocked-page',
+        depth2ResolvedLink: publisherUrl,
+      })
+    );
   });
 
   test('expands transcript sources by ticker', async () => {

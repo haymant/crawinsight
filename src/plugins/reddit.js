@@ -358,10 +358,38 @@ async function fetchWithBrowser(url, headers = {}) {
   });
 }
 
+async function fetchLinkedArticleWithBrowser(url, headers = {}) {
+  return enqueueBrowserFetch(async () => {
+    await waitForRedditRateLimit();
+
+    const session = await createBrowserSession(headers);
+    try {
+      if (String(url).includes('reddit.com')) {
+        await loginIfNeeded(session, headers).catch(() => undefined);
+      }
+
+      const page = await newConfiguredPage(session.context, headers);
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+        return {
+          body: await page.content(),
+          contentType: 'text/html; charset=utf-8',
+        };
+      } finally {
+        await page.close().catch(() => undefined);
+      }
+    } finally {
+      await session.browser.close().catch(() => undefined);
+    }
+  });
+}
+
 module.exports = {
   parse,
   expandRequests: rssPlugin.expandRequests,
   fetchWithBrowser,
+  fetchLinkedArticleWithBrowser,
   // exported for unit tests and diagnostics
   REDDIT_REQUEST_INTERVAL_MS,
 };

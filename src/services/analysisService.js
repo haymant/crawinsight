@@ -171,6 +171,19 @@ function analyzeMentions(article, options = {}) {
   return extractMentionCandidates(article, options).map(scoreMention);
 }
 
+function buildArticleContextSnippets(article, options = {}) {
+  const limit = Math.max(1, Number(options.limit || 5));
+  return analyzeMentions(article, options)
+    .slice(0, limit)
+    .map((mention) => ({
+      assetId: mention.assetId,
+      snippet: mention.contextSnippet,
+      vaderCompound: mention.vaderCompound,
+      finalScore: mention.finalScore,
+      sentimentType: mention.sentimentType,
+    }));
+}
+
 function buildDailyFeatureRows(mentions, previousRows = []) {
   const previousBySymbol = new Map();
   for (const row of previousRows) {
@@ -245,6 +258,7 @@ function analyzeArticle(article, { sourceName, filters = {} }) {
 
 module.exports = {
   analyzeArticle,
+  buildArticleContextSnippets,
   analyzeMentions,
   buildDailyFeatureRows,
   classifySentiment,

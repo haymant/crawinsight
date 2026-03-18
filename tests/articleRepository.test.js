@@ -91,4 +91,30 @@ describe('ArticleRepository', () => {
     expect(params[14]).toBe(JSON.stringify(['A']));
     expect(params[19]).toBe(JSON.stringify({ foo: 'bar' }));
   });
+
+  test('updateAnalysis merges metadata instead of replacing existing metadata', async () => {
+    const repo = new ArticleRepository(path.join(makeTempDir(), 'foo.json'));
+    await repo.insertMany([
+      {
+        id: 'article-1',
+        source: 'foo',
+        title: 'bar',
+        link: 'u',
+        metadata: { depth2Success: true, fullArticlePath: '/tmp/a.html' },
+      },
+    ]);
+
+    await repo.updateAnalysis('article-1', {
+      sentiment: { compound: 0.5 },
+      sentimentType: 'positive',
+      metadata: { mentionCount: 3 },
+    });
+
+    const [article] = await repo.getByIds(['article-1']);
+    expect(article.metadata).toEqual({
+      depth2Success: true,
+      fullArticlePath: '/tmp/a.html',
+      mentionCount: 3,
+    });
+  });
 });

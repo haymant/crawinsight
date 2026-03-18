@@ -4,6 +4,19 @@ class QueueService {
     this.boss = null;
     this.started = false;
 
+    // pg-boss defaults to a 30s job execution timeout, which is too low for
+    // sentiment analysis jobs that may call LLMs or process large batches.
+    // Allow operators to increase this via env vars (useful for long-running
+    // jobs and local debugging).
+    this.defaultJobOptions = {
+      // expireInSeconds controls how long pg-boss will wait for the worker to
+      // finish before marking the job as timed-out and retrying.
+      expireInSeconds: Number(process.env.CRAWLINSIGHT_JOB_EXPIRE_SECONDS) || 600,
+      // Allow jobs to retry once by default, with a short delay.
+      retryLimit: Number(process.env.CRAWLINSIGHT_JOB_RETRY_LIMIT) || 1,
+      retryDelay: Number(process.env.CRAWLINSIGHT_JOB_RETRY_DELAY) || 30,
+    };
+
     if (this.connectionString) {
       // pg-boss ships as an ES module but exposes the class under
       // `PgBoss` when required from CommonJS.  The object returned by
@@ -58,14 +71,15 @@ class QueueService {
     return this.publish('sentiment-judge', payload);
   }
 
-  async publish(queueName, payload) {
+  async publish(queueName, payload, options = {}) {
     if (!this.boss) {
       return null;
     }
 
     await this.start();
-    const id = await this.boss.send(queueName, payload);
-    console.log(`published job to queue ${queueName}, pg-boss id`, id, 'payload', payload);
+    const jobOptions = { ...this.defaultJobOptions, ...options };
+    const id = await this.boss.send(queueName, payload, jobOptions);
+    console.log(`published job to queue ${queueName}, pg-boss id`, id, 'payload', payload, 'options', jobOptions);
     return id;
   }
 
@@ -75,6 +89,30 @@ class QueueService {
 
   async registerSentimentWorker(handler) {
     return this.registerWorker('sentiment-judge', handler);
+  }
+
+  async cancelJob(queueName, jobId) {
+    if (!this.boss) {
+      return false;
+    }
+
+    try {
+      if (typeof this.boss.cancel === 'function') {
+        await this.boss.cancel(queueName, jobId)
+        return true
+      }
+
+      // pg-boss supports `cancel` and `abort`; try abort as a fallback.
+      if (typeof this.boss.abort === 'function') {
+        await this.boss.abort(queueName, jobId)
+        return true
+      }
+
+      return false
+    } catch (e) {
+      console.error('failed to cancel pg-boss job', jobId, e)
+      return false
+    }
   }
 
   async registerWorker(queueName, handler) {

@@ -91,6 +91,37 @@ describe('API', () => {
 
   });
 
+  test('updates an existing source via PUT', async () => {
+    const tempDir = makeTempDir();
+    const configPath = path.join(tempDir, 'sources.yaml');
+    fs.writeFileSync(
+      configPath,
+      `sources:\n  google-news:\n    type: rss\n    urls:\n      - https://news.google.com/rss/search?q=site:reuters.com%20business\n    options:\n      maxCrawlDepth: 2\n`
+    );
+
+    const services = buildServices({
+      configPath,
+      dataPath: path.join(tempDir, 'articles.json'),
+    });
+    const app = createApp(services);
+
+    const updateResponse = await request(app)
+      .put('/api/sources/google-news')
+      .send({
+        config: {
+          type: 'rss',
+          urls: ['https://news.google.com/rss/search?q=site:reuters.com%20business'],
+          options: { maxCrawlDepth: 1 },
+        },
+      });
+
+    expect(updateResponse.status).toBe(200);
+
+    const sourcesResponse = await request(app).get('/api/sources');
+    expect(sourcesResponse.status).toBe(200);
+    expect(sourcesResponse.body.sources['google-news'].options.maxCrawlDepth).toBe(1);
+  });
+
   test('validates scheduler input', async () => {
     const tempDir = makeTempDir();
     const configPath = path.join(tempDir, 'sources.yaml');

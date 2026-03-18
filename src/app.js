@@ -2,9 +2,20 @@ const express = require('express');
 
 // swagger removed per user request; documentation is maintained separately if needed
 
-function createApp({ sourceConfigService, crawlService, jobService, schedulerService, articleRepository, mentionRepository, featureRepository, sentimentService }) {
+function createApp({ sourceConfigService, crawlService, jobService, schedulerService, articleRepository, mentionRepository, featureRepository, sentimentService, queueService }) {
   const app = express();
   app.use(express.json());
+
+  const validateSourceConfig = (config) => {
+    if (!config || typeof config !== 'object') {
+      throw new Error('config object required');
+    }
+    ['filters', 'params', 'options'].forEach((k) => {
+      if (k in config && config[k] != null && typeof config[k] !== 'object') {
+        throw new Error(`${k} must be an object`);
+      }
+    });
+  };
 
 
   app.get('/api/health', (req, res) => {
@@ -27,16 +38,57 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
       if (!name || typeof name !== 'string') {
         throw new Error('name required');
       }
-      if (!config || typeof config !== 'object') {
-        throw new Error('config object required');
-      }
-      ['filters','params','options'].forEach((k) => {
-        if (k in config && config[k] != null && typeof config[k] !== 'object') {
-          throw new Error(`${k} must be an object`);
-        }
-      });
+      validateSourceConfig(config);
       const source = await sourceConfigService.upsertSource(name, config);
       res.status(201).json({ name, source });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/sources/:name/session', async (req, res) => {
+    try {
+      const name = req.params.name;
+      const session = req.body?.session;
+      if (!session || typeof session !== 'object') {
+        return res.status(400).json({ error: 'session object required' });
+      }
+
+      const source = await sourceConfigService.getSource(name);
+      if (!source) {
+        return res.status(404).json({ error: 'Source not found' });
+      }
+
+      await sourceConfigService.upsertSource(name, {
+        ...source,
+        options: {
+          ...(source.options || {}),
+          sessionState: session,
+          useSession: true,
+        },
+      });
+
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/sources/:name/session-status', async (req, res) => {
+    try {
+      const name = req.params.name;
+      const status = await crawlService.checkSourceSession(name);
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.put('/api/sources/:name', async (req, res) => {
+    try {
+      validateSourceConfig(req.body?.config);
+      const source = await sourceConfigService.upsertSource(req.params.name, req.body.config);
+      res.json({ name: req.params.name, source });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -77,6 +129,34 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
       return res.status(404).json({ error: 'Job not found' });
     }
     return res.json(job);
+  });
+
+  app.post('/api/jobs/:id/stop', async (req, res) => {
+    try {
+      const jobId = req.params.id;
+      const job = await jobService.getJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      const queueId = job.queueId || job.queue_id || null;
+      if (!queueId) {
+        return res.status(400).json({ error: 'Job is not queued or has no queue id' });
+      }
+
+      const queueName = job.type === 'sentiment' ? 'sentiment-judge' : 'first-level-crawl';
+      const cancelled = await queueService.cancelJob(queueName, queueId);
+      if (!cancelled) {
+        return res.status(400).json({ error: 'Failed to cancel job' });
+      }
+
+      // Mark job as cancelled in the job table for visibility.
+      await jobService.updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('/api/jobs/:id/stop error', error);
+      res.status(500).json({ error: 'Failed to stop job' });
+    }
   });
 
   app.get('/api/schedulers', (req, res) => {

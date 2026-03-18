@@ -6,16 +6,19 @@ const { crawlinsight_sources } = require('../schema');
 
 // simple helper to convert DB row to source definition
 function rowToSource(row) {
+  const options = row.options || null;
   return {
     type: row.type,
     displayName: row.display_name || undefined,
     concurrency: row.concurrency || undefined,
     urls: row.urls || [],
+    headers: options?.headers || undefined,
     filters: row.filters,
     params: row.params,
-    options: row.options,
+    options,
     disabled: row.disabled || false,
     storeDir: row.storage_id || undefined,
+    sessionState: options?.sessionState || undefined,
   };
 }
 
@@ -94,6 +97,29 @@ class SourceConfigService {
       throw new Error('Source disabled flag must be boolean');
     }
 
+    const normalizedOptions = definition.options || null;
+    const providedSessionState = definition.sessionState ?? normalizedOptions?.sessionState;
+    const providedUseSession = definition.useSession ?? normalizedOptions?.useSession;
+
+    const mergedOptions = {
+      ...(normalizedOptions || {}),
+      ...(definition.headers ? { headers: definition.headers } : {}),
+      ...(providedUseSession !== undefined ? { useSession: providedUseSession } : {}),
+      ...(providedSessionState !== undefined ? { sessionState: providedSessionState } : {}),
+    };
+
+    // Preserve existing sessionState if the caller didn't explicitly provide one.
+    if (
+      mergedOptions.sessionState === undefined &&
+      this.db &&
+      typeof this.db.select === 'function'
+    ) {
+      const existing = await this.getSource(name).catch(() => null);
+      if (existing?.sessionState) {
+        mergedOptions.sessionState = existing.sessionState;
+      }
+    }
+
     const row = {
       name,
       type: definition.type,
@@ -102,7 +128,7 @@ class SourceConfigService {
       urls: definition.urls,
       filters: definition.filters || null,
       params: definition.params || null,
-      options: definition.options || null,
+      options: mergedOptions,
       disabled: definition.disabled || false,
       storage_id: definition.storeDir || null,
     };
