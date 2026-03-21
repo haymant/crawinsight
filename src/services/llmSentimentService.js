@@ -62,27 +62,37 @@ async function scoreMentionsWithLlm({ article, mentions }) {
     `Mentions: ${JSON.stringify(payload)}`,
   ].join('\n');
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a financial sentiment classifier. Answer with strict JSON only.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.LLM_SENTIMENT_TIMEOUT_MS || 30_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a financial sentiment classifier. Answer with strict JSON only.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`LLM sentiment request failed with status ${response.status}`);

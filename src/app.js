@@ -25,6 +25,13 @@ function createApp({ sourceConfigService, crawlService, jobService, schedulerSer
   app.get('/api/sources', async (req, res) => {
     try {
       const sources = await sourceConfigService.listSources();
+      // Don't expose session state when returning source configs.
+      Object.values(sources).forEach((s) => {
+        if (s && s.options) {
+          delete s.options.sessionState;
+        }
+        delete s.sessionState;
+      });
       res.json({ sources });
     } catch (err) {
       console.error('/api/sources error', err);

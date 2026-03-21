@@ -116,11 +116,19 @@ function enqueueBrowserFetch(task) {
 
 async function waitForRedditRateLimit() {
   const now = Date.now();
-  const waitMs = Math.max(0, REDDIT_REQUEST_INTERVAL_MS - (now - lastRedditRequestAt));
+  const baseWait = Math.max(0, REDDIT_REQUEST_INTERVAL_MS - (now - lastRedditRequestAt));
+  const jitter = Math.floor(Math.random() * Math.max(200, baseWait));
+  const waitMs = baseWait + jitter;
   if (waitMs > 0) {
     await sleep(waitMs);
   }
   lastRedditRequestAt = Date.now();
+}
+
+async function humanPause() {
+  // Add small random delays to mimic human browsing
+  const delay = 300 + Math.floor(Math.random() * 700); // 300-1000ms
+  await sleep(delay);
 }
 
 function getCredentials() {
@@ -148,6 +156,17 @@ function getAuthStatePath() {
   return path.join(dataDir, '.reddit-auth.json');
 }
 
+function normalizeStorageState(state) {
+  if (!state || typeof state !== 'object') return state;
+  const cookies = Array.isArray(state.cookies)
+    ? state.cookies.map((c) => ({
+        ...c,
+        value: c?.value == null ? '' : String(c.value),
+      }))
+    : state.cookies;
+  return { ...state, cookies };
+}
+
 async function createBrowserSession(headers = {}) {
   const { chromium } = require('playwright');
   const authStatePath = getAuthStatePath();
@@ -157,6 +176,17 @@ async function createBrowserSession(headers = {}) {
   };
 
   if (fs.existsSync(authStatePath)) {
+    try {
+      const raw = fs.readFileSync(authStatePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      const normalized = normalizeStorageState(parsed);
+      if (normalized && JSON.stringify(normalized, null, 2) !== raw) {
+        fs.writeFileSync(authStatePath, JSON.stringify(normalized, null, 2), 'utf8');
+      }
+    } catch (e) {
+      // keep going; playwright will throw if storage state is invalid
+    }
+
     contextOptions.storageState = authStatePath;
   }
 
@@ -370,11 +400,34 @@ async function fetchLinkedArticleWithBrowser(url, headers = {}) {
 
       const page = await newConfiguredPage(session.context, headers);
       try {
+        await humanPause();
         await page.goto(url, { waitUntil: 'domcontentloaded' });
         await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+
+        const extracted = await page.evaluate(() => {
+          const getTitle = () => {
+            const titleEl = document.querySelector('shreddit-title[title]');
+            if (titleEl) return titleEl.getAttribute('title') || null;
+            return null;
+          };
+
+          const getMainHtml = () => {
+            const main = document.querySelector('main#main-content, main.main, main.main-content');
+            if (!main) return null;
+            return main.innerHTML;
+          };
+
+          return {
+            title: getTitle(),
+            article: getMainHtml(),
+          };
+        });
+
         return {
           body: await page.content(),
           contentType: 'text/html; charset=utf-8',
+          title: extracted?.title || null,
+          article: extracted?.article || null,
         };
       } finally {
         await page.close().catch(() => undefined);
